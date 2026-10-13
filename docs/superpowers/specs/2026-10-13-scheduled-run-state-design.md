@@ -37,13 +37,14 @@ The reporter's use case is to keep the schedule in the app and let Home Assistan
 - A scheduled start or resume on a mower that sends only bury points shows as *mowing* once the mower has left its charger, never on the announcement alone; the trip home after a pause or stop shows as *returning*, and docking shows as *docked*.
 - Leaving DOCKED starts the poll, as it does for every other start.
 - A new entity says what started or resumed the current job and which job it is, so an automation can tell the schedule's job from any other (the *Job started* event entity, §2).
-- No change on a mower that already pushes its state: a bury point that arrives after the push has moved the state on writes nothing (see the ordering note in §1).
+- A bury point never overrides a state the mower pushed: on a mower that pushes its state, the push comes first and the pair writes nothing (see the ordering note in §1); where a pair would complete before a push, the push is a dropped duplicate.
 
 ## Non-goals
 
 - The brief *Unavailable* the reporter sees at the end of a run. The excerpt has no `AvailabilityEvent(available=False)` at all, so it needs its own log; it stays open on #120.
 - Mapping trigger words to a single "scheduled" flag. The same bury point carries different words on different firmware (see §2), so the entity reports the words as they are and carries the job type beside them.
 - `onStats` as a mowing signal. It is reliable on this G1-800 but unconfirmed on the O1200, and the bury points are already there.
+- The G1-800's stop word. Its `mow-schedule-stop` says `triggerType: "workcomplete"` (lower-case `c`, see Fixtures), while `_OnMowJobEdge`'s `end_job()` check, `event.py`'s `_TRIGGER_EVENT_TYPES` and the progress sensor's completion all compare against `"workComplete"`. That is a separate bug in the existing stop handling and gets its own issue.
 
 ## Design
 
@@ -60,7 +61,7 @@ The reporter's use case is to keep the schedule in the app and let Home Assistan
 
 All four are observed on real hardware (`MowerJobEdgeEvent`'s docstring, issue #73, the #120 log, and Geten's log of 2026-10-12). `MowerJobEdgeEvent.phase` widens from `"start"`/`"stop"` to those four values, and its docstring says so. The existing consumers already name the phases they act on explicitly (`sensor.py`'s `_on_job_edge` and `event.py`'s `_on_job_edge`), so a `pause` or `resume` reaches them and changes nothing there; tests pin that.
 
-**The job type travels with the edge.** `JOB_TYPE` is a new `ClassVar[str]` on `_OnMowJobEdge`, set on all twelve subclasses to the bury point's middle segment (`schedule`, `spotarea`, `border`, `auto`), and `MowerJobEdgeEvent` gains a field `job_type: str` that the handler fills from it. The middle segment is the job type, not the trigger (`MowerJobEdgeEvent`'s docstring), and it is the one signal that says "this is the schedule's job" the same way on every firmware: the O1200's `trigger: continue` and the G1-800's `triggerType: schedule` both arrive on `mow-schedule-resume`. It is not the `cleanState.content.type` that `MowerStateRecord.job_type` holds for the mow command (`spotArea` there, `spotarea` here); the two are not merged.
+**The job type travels with the edge.** `JOB_TYPE` is a new `ClassVar[str]` on `_OnMowJobEdge`, set on all twelve subclasses to the bury point's middle segment (`schedule`, `spotarea`, `border`, `auto`), and `MowerJobEdgeEvent` gains a required field `job_type: str`, placed directly after `trigger` (before the defaulted `mowed_area`, `work_area` and `_seq`), that the handler fills from it. The three test helpers that build the event without it (`tests/test_event.py` lines 137 and 205, `tests/test_sensor.py` line 1085) gain the argument. The middle segment is the job type, not the trigger (`MowerJobEdgeEvent`'s docstring), and it is the one signal that says "this is the schedule's job" the same way on every firmware: the O1200's `trigger: continue` and the G1-800's `triggerType: schedule` both arrive on `mow-schedule-resume`. It is not the `cleanState.content.type` that `MowerStateRecord.job_type` holds for the mow command (`spotArea` there, `spotarea` here); the two are not merged.
 
 **A start or resume from the dock is written only once the charger confirms the departure.** A bury point alone is not proof that the mower left: a resume announced while the mower stays on its charger (a rain delay, a fault) would read *mowing* with nothing to correct it. The charge half of the poll publishes DOCKED only on `isCharging: 1`, and the polled `idle` is discarded (#48), so a false CLEANING on a mower answering `isCharging: 0` would stand and the poll would never stop again. A false CLEANING also reaches every `StateEvent` consumer: it clears the fault latch (`fault.py`, CLEANING is in `_RECOVERY_STATES`), clears the activity sensor's rain flag (`EcovacsActivitySensor._on_state`), and makes the progress sensor trust a stats payload that firmware 1.36.208 does not zero between jobs (`_STATS_TRUSTED_STATES`).
 
@@ -73,32 +74,38 @@ So the CLEANING needs two facts that arrive within `DEPARTURE_WINDOW` (60 s, a m
 | O1200 `2i0fns` (2026-10-12) | app start, battery 100 | start edge, 18:14:15 | `isCharging: 0`, 7 s later |
 | O1200 `2i0fns` (2026-10-12) | schedule resume after a charge break, 11:47 and 14:29 | `isCharging: 0` | resume edge, 8 s later |
 
-The two O1200 starts at battery 100 also show that a mower parked on a full battery still reports itself charging until it leaves, so a full battery does not take the confirmation away. `GetChargeStateMower`'s docstring says a mower parked on a full battery stops charging without moving; neither log shows that, and the design does not rely on it either way.
+On the O1200 the pair never decides anything: its own `onScheduleTaskInfo` CLEANING push comes before both facts every time (09:00:53 before the 09:01:06 start edge, 11:47:35 before the 11:47:42 unplug, 14:29:12 before 14:29:19), so the push has already moved the state and the pair writes nothing. Its rows are here as evidence of the order the two facts can arrive in, which the G1-800 may share on other departures.
+
+The two O1200 starts at battery 100 also show that a mower parked on a full battery still reports itself charging until it leaves, so a full battery does not take the confirmation away. `GetChargeStateMower`'s docstring says a mower parked on a full battery stops charging without moving; neither log shows that. If it happens, it is accepted gap (5) below.
 
 The record keeps both facts in two new fields of `MowerStateRecord`, `departure_edge_at: float | None` and `charge_left_at: float | None` (monotonic seconds), through two new methods that take the clock as an argument so tests can inject it:
 
 - `note_departure_edge(now: float) -> bool` stores `now` as `departure_edge_at`. If `charge_left_at` is set and `now - charge_left_at <= DEPARTURE_WINDOW`, it clears both and returns True; otherwise it returns False. A stamp older than the window is cleared, not kept.
 - `note_charge_left(now: float) -> bool` does the same with the roles swapped.
-- `dock()` and `move()` clear both fields. A dock means a pending departure did not happen; a pushed state that moved the mower is better evidence than either stamp, and a stale stamp must not re-assert CLEANING over a PAUSED pushed in between.
+- `cancel_departure()` clears both fields. It is called by the paths that publish a state the mower reported, before they notify: `handle_clean_info` whenever it publishes or withholds a status, `OnChargeInfo._handle_body_data_dict`, and `OnReturnNormalStart` (below). A reported state is better evidence than either stamp, and a stale stamp must not re-assert CLEANING over a PAUSED pushed in between.
+- `dock()` clears `charge_left_at` only: charging again refutes the unplug. It keeps `departure_edge_at`, which the window already bounds, because `dock()` also runs on a repeat confirmation of a dock the record already knew (a `getChargeState` answer with `isCharging: 1` from `update_entity`, the first-subscriber refresh, the availability-flap refresh or the 30007 fail code, or a repeated push). Being on the charger one second after an announcement does not refute a departure three seconds away.
+- `move()` does not touch either field. Besides `handle_clean_info` and `OnChargeInfo`, it is called by `OnPos._handle_body_data_dict` when a docked mower's position is clearly away from the dock, which publishes no state; a position sample between the two facts must not break the pair.
 
 The two callers, both in handlers, per the rule in CLAUDE.md that state derived from the stream is never written by a subscription:
 
-1. **The edge.** In `_OnMowJobEdge._handle_body`, for `PHASE in ("start", "resume")`, on a registered bus whose mower may be on its charger, call `record.note_departure_edge(time.monotonic())`. "May be on its charger" means `record.docked` is True, **or** no `StateEvent` has been published on the bus yet (`event_bus.get_last_event(StateEvent) is None`): after a restart the record starts undocked, and a mower that has said nothing since must still be able to arm. Arming while that is unknown is safe because only a real push can complete the pair. If the call returns True, call `record.move()` and notify `StateEvent(State.CLEANING)`. This runs before and independently of the trigger parsing: an edge with neither `trigger` nor `triggerType` still counts, and still returns `analyse()` for its `MowerJobEdgeEvent` as today.
-2. **The push.** In `OnChargeState._handle_body`, before it forwards to `GetChargeStateMower._handle_body`: if the body's `data.isCharging` is `0` and the bus is registered, call `record.note_charge_left(time.monotonic())`; if it returns True, call `record.move()` and notify `StateEvent(State.CLEANING)`; then forward as today. Only the push counts. A `getChargeState` answer is a snapshot, not a change, and it is sent while the mower is docked by `update_entity`, by the refresh after an availability flap and by the first subscriber; letting it pair would bring the false CLEANING back. `GetChargeStateMower` therefore does not change.
+1. **The edge.** In `_OnMowJobEdge._handle_body`, for `PHASE in ("start", "resume")`, on a registered bus whose mower may be on its charger, call `record.note_departure_edge(monotonic())`. "May be on its charger" means `record.docked` is True, **or** the bus's last `StateEvent` is `None` or DOCKED (`event_bus.get_last_event(StateEvent)`): after a restart the record starts undocked and a mower that has said nothing since must still be able to arm, and `OnPos` can clear `record.docked` without publishing anything, leaving DOCKED as the last state. Arming then is safe because only a real push can complete the pair, and it is still refused in the adverse orders below, since a pushed CLEANING, PAUSED or RETURNING makes the last state something other than DOCKED. If the call returns True, call `record.move()` and notify `StateEvent(State.CLEANING)`. This runs before and independently of the trigger parsing: an edge with neither `trigger` nor `triggerType` still counts, and still returns `analyse()` for its `MowerJobEdgeEvent` as today.
+2. **The push.** In `OnChargeState._handle_body`, before it forwards to `GetChargeStateMower._handle_body`: if the body's `data` is a dict whose `isCharging` is `0` and the bus is registered, call `record.note_charge_left(monotonic())`; if it returns True, call `record.move()` and notify `StateEvent(State.CLEANING)`; then forward as today. A body without a dict `data` (the fail shape), or with `isCharging` other than `0`, stamps nothing. The pairing lives in `_handle_body` only; `OnChargeState._handle_body_data_dict` is unchanged, so the replay tests drive `_handle_body` or `handle()`. Only the push counts. A `getChargeState` answer is a snapshot, not a change, and it is sent while the mower is docked by `update_entity`, by the refresh after an availability flap and by the first subscriber; letting it pair would bring the false CLEANING back. `GetChargeStateMower` therefore does not change.
 
 `move()` is what `handle_clean_info` calls on CLEANING, so the charge gate (#67) then sees the mower as off its charger.
 
+**The clock.** `messages.py` already binds `time` to `datetime.time` (`from datetime import time`, used by `_as_clock`), so it imports `from time import monotonic` and calls `monotonic()`; the handler tests monkeypatch `messages.monotonic` to step the clock.
+
 A `pause` or `stop` sets no state. What follows it already says what the mower does: `return-normal-start` (below) and then `onChargeState isCharging: 1`, which `GetChargeStateMower` turns into `record.dock()` and the library into DOCKED. Giving `pause` a PAUSED of its own would flash *paused* for 0.35 s before *returning*.
 
-**The trip home.** A new handler `OnReturnNormalStart` for `onFwBuryPoint-bd_task-return-normal-start`, on the same `MessageBody` base as `_OnMowJobEdge` (the fields sit directly under `body`). It reads no field of the body. On a registered bus whose `record.docked` is False it calls `record.move()` and notifies `StateEvent(State.RETURNING)`; on a docked or unregistered bus it notifies nothing. Either way it returns `success()`, since it understood the message. It is not a job edge: it publishes no `MowerJobEdgeEvent` and is not an `_OnMowJobEdge` subclass, because a return is not a job boundary and the progress sensor must not see it as one.
+**The trip home.** A new handler `OnReturnNormalStart` for `onFwBuryPoint-bd_task-return-normal-start`, on the same `MessageBody` base as `_OnMowJobEdge` (the fields sit directly under `body`). It reads no field of the body. On a registered bus whose `record.docked` is False it calls `record.cancel_departure()`, `record.move()` and notifies `StateEvent(State.RETURNING)`; on a docked or unregistered bus it notifies nothing. Either way it returns `success()`, since it understood the message. It is not a job edge: it publishes no `MowerJobEdgeEvent` and is not an `_OnMowJobEdge` subclass, because a return is not a job boundary and the progress sensor must not see it as one.
 
-**Ordering on a mower that pushes its state.** Both gates exist because a bury point can arrive after the state has moved on. The O1200's `mow-schedule-start` lands 13 s after its `onScheduleTaskInfo` CLEANING push; a pause or a rain return in those 13 s must not be overwritten. That is covered because the push already called `move()`: the mower is no longer docked, a `StateEvent` exists, and the late edge does not count. When `return-normal-start` arrives relative to `onChargeInfo goCharging` and docking on a pushing mower is unobserved; a late one after docking finds `record.docked` True and writes nothing, so it cannot flip DOCKED back to RETURNING or clear the `suppressed` plan state #67 and `CleanMower` rely on.
+**Ordering on a mower that pushes its state.** Both gates exist because a bury point can arrive after the state has moved on. The O1200's `mow-schedule-start` lands 13 s after its `onScheduleTaskInfo` CLEANING push; a pause or a rain return in those 13 s must not be overwritten. That is covered because the push already moved the state: the mower is no longer docked, the last `StateEvent` is not DOCKED, and the late edge does not count. When `return-normal-start` arrives relative to `onChargeInfo goCharging` and docking on a pushing mower is unobserved; a late one after docking finds `record.docked` True and writes nothing, so it cannot flip DOCKED back to RETURNING or clear the `suppressed` plan state #67 and `CleanMower` rely on.
 
-**Accepted gaps.** (1) A resume while the mower is out on the lawn writes no state: #120 is about leaving the dock, the only time the poll is off. (2) Only the observed pause and resume edges are registered (`schedule`, `spotarea`), so a charge-break resume of an `auto` or `border` job on a mower that sends only bury points still reads *docked* until a push or the next start; registering those is one subclass each once they are seen. (3) A `pause` out on the lawn that is not followed by `return-normal-start` leaves CLEANING standing until the next push or docking. (4) The O1200's `mow-border-rotate-*` edges are not registered here; they belong to #127.
+**Accepted gaps.** (1) A resume while the mower is out on the lawn writes no state: #120 is about leaving the dock, the only time the poll is off. (2) Only the observed pause and resume edges are registered (`schedule`, `spotarea`), so a charge-break resume of an `auto` or `border` job on a mower that sends only bury points still reads *docked* until a push or the next start; registering those is one subclass each once they are seen. (3) A `pause` out on the lawn that is not followed by `return-normal-start` leaves CLEANING standing until the next push or docking. (4) The O1200's `mow-border-rotate-*` edges are not registered here; they belong to #127. (5) A mower that stops charging on a full battery without moving would push an `isCharging: 0` with no departure behind it; if that lands within 60 s of a start or resume that never left (a rain delay), the pair completes and CLEANING and the poll stand until a push or an `isCharging: 1` arrives. Neither log shows such a push.
 
 **Why the poll then starts.** `_setup_polling`'s `on_status` subscription starts the poll on any state other than DOCKED, so the paired CLEANING is what turns it on. The controller's code does not change; its comment that leaving the dock "is the one transition the mower has not been seen to drop" does (see Documentation).
 
-**A poll cannot undo it.** The polled `getCleanInfo` answer `{"state": "idle"}` is already discarded for every command family (`_MowerCleanInfoHandling`, issue #48). On a mower that pushes its state before the pair completes, `move()` has already cleared the stamps and nothing is written; if the pair completes first, the push's CLEANING equals the bus's last `StateEvent` and `EventBus.notify` drops it before any subscriber runs.
+**A poll cannot undo it.** The polled `getCleanInfo` answer `{"state": "idle"}` is already discarded for every command family (`_MowerCleanInfoHandling`, issue #48). On a mower that pushes its state before the pair completes, `cancel_departure()` has already cleared the stamps and nothing is written; if the pair completes first, the push's CLEANING equals the bus's last `StateEvent` and `EventBus.notify` drops it before any subscriber runs.
 
 **Registration.** The five new classes are added to the tuple `apply()` registers in `deebot_patch/__init__.py`, next to the existing job edges. `OnChargeState` is already registered.
 
@@ -124,12 +131,17 @@ Why the words stay raw: the G1-800's `mow-schedule-resume` says `triggerType: sc
 
 All new behaviour is in the patch layer or in `event.py`. The patch-layer tests run locally (`tests/deebot_patch/`, `-p no:homeassistant`); the entity and controller tests are `requires_ha` and CI is the source of truth for them.
 
+The replay tests use the bodies listed under Fixtures below.
+
 - **`tests/deebot_patch/test_messages.py`**
-  - The #120 sequence replayed through the real handlers on a registered bus that starts docked, the payloads copied from the reporter's log: nothing at the 13:00 resume, CLEANING at the `onChargeState isCharging: 0` 3 s later, RETURNING at `return-normal-start`, DOCKED at `onChargeState isCharging: 1`, the same again from the 14:00 resume, RETURNING after the stop.
+  - The #120 sequence replayed through the real handlers on a registered bus that starts docked: nothing at the 13:00 resume, CLEANING at the `onChargeState isCharging: 0` 3 s later, RETURNING at `return-normal-start`, DOCKED at `onChargeState isCharging: 1`, the same again from the 14:00 resume, RETURNING after the stop.
   - The O1200 charge-break order: `onChargeState isCharging: 0` first, the resume edge 8 s later, CLEANING at the edge.
-  - Neither order pairs across more than 60 s; a dock between the two facts cancels the pairing; a pushed CLEANING (`move()`) between them cancels it too, so a later fact does not re-assert CLEANING over a PAUSED.
+  - Neither order pairs across more than 60 s; an `isCharging: 1` between an unplug and a later edge cancels the unplug; a reported state between the two facts (a pushed PAUSED through `handle_clean_info`, an `onChargeInfo`) cancels both, so a later fact does not re-assert CLEANING over it.
+  - A `getChargeState` answer with `isCharging: 1` between the edge and the unplug push does not stop the pair (edge-first, as at 13:00:23 → 13:00:26).
+  - An `OnPos` away-from-dock sample between the two facts does not stop the pair.
   - A `getChargeState` answer with `isCharging: 0` does **not** complete a pair.
-  - An edge on a bus with no `StateEvent` yet and `record.docked` False counts; an edge on a bus that is not docked and has a `StateEvent` does not.
+  - An edge on a bus with no `StateEvent` yet and `record.docked` False counts; so does one whose last `StateEvent` is DOCKED after `OnPos` cleared `record.docked`; an edge on a bus whose last `StateEvent` is PAUSED, CLEANING or RETURNING and that is not docked does not.
+  - An `onChargeState` with a fail-shaped body, or with `isCharging: 1`, stamps nothing.
   - A start edge with neither `trigger` nor `triggerType` still counts.
   - A start or resume, or a `return-normal-start`, on an unregistered bus (a vacuum on the same account) notifies no `StateEvent`; `return-normal-start` returns success there.
   - Adverse orders: a resume edge after a pushed PAUSED (bus not docked) does not count and the state stays PAUSED; a `return-normal-start` after docking notifies nothing and leaves `record.docked` and `record.suppressed` as they were.
@@ -137,7 +149,7 @@ All new behaviour is in the patch layer or in `event.py`. The patch-layer tests 
   - Every edge carries its class's `job_type`.
   - The O1200 sequence from 2026-10-12: `onScheduleTaskInfo` CLEANING, then `mow-schedule-start`, then `onChargeState isCharging: 0`, produces exactly one CLEANING notification to subscribers.
   - Registration: the five new names are registered by `apply()`, next to `test_the_schedule_and_spotarea_job_edge_names_are_registered`.
-- **`tests/deebot_patch/test_state_precedence.py`:** `note_departure_edge()` and `note_charge_left()` in both orders, at and past the window, and `dock()` and `move()` clearing both stamps.
+- **`tests/deebot_patch/test_state_precedence.py`:** `note_departure_edge()` and `note_charge_left()` in both orders, at and past the window; `cancel_departure()` clearing both stamps; `dock()` clearing only `charge_left_at`; `move()` clearing neither.
 - **`tests/test_controller.py`:** a paired departure on a docked mower starts the poll, and the DOCKED at the next charge stops it.
 - **`tests/test_event.py`:** *Job started* fires the trigger word with `phase` and `job_type` on a start and on a resume, fires nothing on pause and stop or on an unknown word (logged once), does not re-fire on a subscribe replay of the same edge object, does fire for a second equal-looking edge, and exists only on a MOWER device. *Last mowing job* fires nothing on a `pause` or `resume` edge. `test_no_stale_event_translations_or_icons` widens from `last_job` to both keys.
 - **`tests/test_sensor.py`:** the progress sensor ignores `pause` and `resume` edges.
@@ -148,7 +160,59 @@ All new behaviour is in the patch layer or in `event.py`. The patch-layer tests 
 - `CLAUDE.md`: the `messages.py` bullet does not mention the job edges today, so it gains a sentence: the task bury points (`mow-*-start/resume/pause/stop`) publish `MowerJobEdgeEvent` with their job type, a start or resume edge paired with an `onChargeState isCharging: 0` push within 60 s, in either order, writes CLEANING, and `return-normal-start` writes RETURNING. The `state_precedence.py` bullet gains the two departure stamps.
 - `controller.py`, `on_status`: the comment "leaving is the one transition the mower has not been seen to drop" is refuted by #120; it says instead that a departure the mower does not push is written from the bury points (`messages.py`).
 - `messages.py` module docstring: the opening paragraph ("Without the latter two the entity never leaves 'docked' during a scheduled run") gains the task bury points as a third way out of DOCKED, and the list of task bury points ("`{start,stop}`", "eight more messages") grows by the four edges and `return-normal-start`.
-- `MowerJobEdgeEvent` docstring: "Only the two edges this integration acts on are registered", the `phase` description and the new `job_type` field.
+- `MowerJobEdgeEvent` docstring: "Only the two edges this integration acts on are registered", the `phase` description, the new `job_type` field, and the trigger vocabulary, which gains `continue` and `schedule` on a resume and `lowBattery` on a pause (already cited by `tests/test_sensor.py`).
+- `tests/deebot_patch/test_contract.py`, the comment near line 318 ("each of the four bury-point handlers"): it counts the handlers that exist after this change.
 - `OnChargeState` docstring: the push now also pairs with a start or resume edge. `GetChargeStateMower` docstring: its full-battery sentence gains that the two O1200 logs of 2026-10-12 show a mower at battery 100 reporting itself charging until it leaves.
 - `event.py` module docstring: the entity gains a sibling, *Job started*.
 - README, the platform table: the `event` row's count goes from 1 to 2 and lists *Job started*, plus a short section on its event types and event data, the firmware difference in trigger words, and the weather-check automation from #120 as the example.
+
+## Fixtures
+
+The `body` of each message the replay tests use, copied verbatim (the `header` carries nothing the handlers read). Sources: the reporter's log on #120 (`ecovacs_scheduled_run.log`, https://github.com/user-attachments/files/33343775/ecovacs_scheduled_run.log; G1-800 `77atlz`, firmware 1.36.208, device ids anonymized by the reporter), and the maintainer's own O1200 `2i0fns`, firmware 1.13.10, logged from Home Assistant on 2026-10-12. All arrive on `iot/atr/<name>/...`.
+
+G1-800, #120:
+
+```
+13:00:23.762  onFwBuryPoint-bd_task-mow-schedule-resume
+  {"bid":"7101791802821723","gid":"G1791648417330","index":"0000000435","mapid":"0809159361","pauseId":"9211791733414102","resumeId":"2261791802821723","scheduleId":"1791725416643502","sid":"6211791802821723","triggerType":"schedule","ts":"1791802821723"}
+13:00:26.501  onChargeState
+  {"data":{"isCharging":0,"mode":"slot"}}
+13:30:23.452  onFwBuryPoint-bd_task-mow-schedule-pause
+  {"bid":"9831791804621723","cuttedArea":199.292500,"gid":"G1791648417330","index":"0000000454","mapid":"0809159361","pauseId":"4491791804621723","resumeId":"2261791802821723","scheduleId":"1791725416643502","sid":"4301791804621723","time":0,"triggerType":"schedule","ts":"1791804621723","workArea":280.177500}
+13:30:23.801  onFwBuryPoint-bd_task-return-normal-start
+  {"bid":"0031791804622040","gid":"G1791648417330","index":"0000000457","mapid":"0809159361","returnId":"1791804622039907","sid":"2531791804622040","triggerType":"schedule","ts":"1791804622040","workstate":1}
+13:31:35.850  onChargeState
+  {"data":{"isCharging":1,"mode":"slot"}}
+14:00:23.824  onFwBuryPoint-bd_task-mow-schedule-resume
+  {"bid":"7931791806421723","gid":"G1791648417330","index":"0000000491","mapid":"0809159361","pauseId":"4491791804621723","resumeId":"1241791806421724","scheduleId":"1791725416643502","sid":"0781791806421724","triggerType":"schedule","ts":"1791806421724"}
+14:00:27.022  onChargeState
+  {"data":{"isCharging":0,"mode":"slot"}}
+15:01:59.695  onFwBuryPoint-bd_task-mow-schedule-stop
+  {"bid":"0341791810117742","cuttedArea":280.202525,"gid":"G1791648417330","index":"0000000521","mapid":"0809159361","pauseId":"4491791804621723","resumeId":"1241791806421724","scheduleId":"1791725416643502","sid":"4061791810117742","time":194.183334,"triggerType":"workcomplete","ts":"1791810117742","workArea":280.202525}
+15:01:59.802  onFwBuryPoint-bd_task-return-normal-start
+  {"bid":"4931791810117951","gid":"G1791648417330","index":"0000000526","mapid":"0809159361","mowId":"","returnId":"1791810117949218","sid":"9401791810117951","triggerType":"schedule","ts":"1791810117951","workstate":1}
+```
+
+O1200, charge-break resume (unplug first):
+
+```
+11:47:35.375  onScheduleTaskInfo
+  {"data":{"trigger":"continue","other":"","rotationPause":0,"ssid":"1","state":"clean","cleanState":{"motionState":"working","content":{"type":"auto","subContent":{"type":"back"}}}}}
+11:47:42.141  onChargeState
+  {"data":{"isCharging":0,"mode":"slot"}}
+11:47:50.636  onFwBuryPoint-bd_task-mow-schedule-resume
+  {"bid":"7081791798470484","gid":"G1790503263492","index":"0000133051","jobId":"5251791788453307","mapId":"511702305","sid":"4161791798470484","trigger":"continue","ts":"1791798470485","workType":18}
+```
+
+The charge-break order test without the push uses the last two bodies alone; the "exactly one CLEANING" test uses all three.
+
+O1200, scheduled start (push, edge, unplug):
+
+```
+09:00:53.527  onScheduleTaskInfo
+  {"data":{"trigger":"schedule","other":"loading","rotationPause":0,"ssid":"0","state":"clean","cleanState":{"motionState":"working","content":{"type":"auto","subContent":{"type":"idle"}}}}}
+09:01:06.627  onFwBuryPoint-bd_task-mow-schedule-start
+  {"bid":"7301791788466359","gid":"G1790503263492","index":"0000126501","jobId":"5251791788453307","mapId":"511702305","sid":"8781791788466360","trigger":"schedule","ts":"1791788466360","workType":18}
+09:01:13.221  onChargeState
+  {"data":{"isCharging":0,"mode":"slot"}}
+```
