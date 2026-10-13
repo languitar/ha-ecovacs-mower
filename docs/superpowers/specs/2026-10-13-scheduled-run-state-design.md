@@ -36,14 +36,13 @@ The reporter's use case is to keep the schedule in the app and let Home Assistan
 
 - A scheduled start or resume on a mower that sends only bury points shows as *mowing* once the mower has left its charger, never on the announcement alone; the trip home after a pause or stop shows as *returning*, and docking shows as *docked*.
 - Leaving DOCKED starts the poll, as it does for every other start.
-- A new entity says what started or resumed the current job, so an automation can tell a scheduled start from an app or Home Assistant start (its form is an open decision, see §2).
+- A new entity says what started or resumed the current job, so an automation can tell a scheduled start from an app or Home Assistant start (the *Job started* event entity, §2).
 - No change on a mower that already pushes its state: a bury point that arrives after the push has moved the state on writes nothing (see the ordering note in §1).
 
 ## Non-goals
 
 - The brief *Unavailable* the reporter sees at the end of a run. The excerpt has no `AvailabilityEvent(available=False)` at all, so it needs its own log; it stays open on #120.
-- Mapping trigger words to a single "scheduled" flag. The same bury point carries different words on different firmware (see below), so the sensor reports the words as they are.
-- A start trigger restored across a Home Assistant restart.
+- Mapping trigger words to a single "scheduled" flag. The same bury point carries different words on different firmware (see below), so the entity reports the words as they are.
 - `onStats` as a mowing signal. It is reliable on this G1-800 but unconfirmed on the O1200, and the bury points are already there.
 
 ## Design
@@ -63,7 +62,7 @@ All four are observed on real hardware (`MowerJobEdgeEvent`'s docstring, issue #
 
 **A start or resume from the dock arms a departure; the charger confirms it.** A bury point alone is not proof that the mower left: a resume announced while the mower stays on its charger (a rain delay, a fault) would read *mowing* with nothing to correct it. The charge half of the poll publishes DOCKED only on `isCharging: 1`, a mower parked on a full battery answers `isCharging: 0` (see `GetChargeStateMower`'s docstring), and the polled `idle` is discarded (#48), so a false CLEANING would stand and the poll would never stop again. A false CLEANING also reaches every `StateEvent` consumer: it clears the fault latch (`fault.py`, CLEANING is in `_RECOVERY_STATES`), clears the activity sensor's rain flag (`EcovacsActivitySensor._on_state`), and makes the progress sensor trust a stats payload that firmware 1.36.208 does not zero between jobs (`_STATS_TRUSTED_STATES`). So the state is written in two steps, both in handlers:
 
-1. **Arm.** In `_OnMowJobEdge._handle_body`, for `PHASE in ("start", "resume")`, on a registered bus whose `record.docked` is True: `record.arm_departure(now)`, which stores `time.monotonic()` in a new field `MowerStateRecord.departure_armed_at: float | None`. Nothing is notified yet. This runs independently of the trigger parsing below it: an edge with neither `trigger` nor `triggerType` still arms, and still returns `analyse()` for its `MowerJobEdgeEvent` as today. On a bus whose `record.docked` is False, nothing is armed: the mower is already off its charger, the poll is already running, and the state it has is the newer one (see the ordering note below).
+1. **Arm.** In `_OnMowJobEdge._handle_body`, for `PHASE in ("start", "resume")`, on a registered bus whose `record.docked` is True: `record.arm_departure()`, which stores `time.monotonic()` in a new field `MowerStateRecord.departure_armed_at: float | None`. Nothing is notified yet. This runs independently of the trigger parsing below it: an edge with neither `trigger` nor `triggerType` still arms, and still returns `analyse()` for its `MowerJobEdgeEvent` as today. On a bus whose `record.docked` is False, nothing is armed: the mower is already off its charger, the poll is already running, and the state it has is the newer one (see the ordering note below).
 2. **Confirm.** In `GetChargeStateMower._handle_body_data_dict`, which both the `onChargeState` push and the `getChargeState` answer go through: on `isCharging: 0`, if `record.departure_armed_at` is set and no more than `DEPARTURE_WINDOW` (60 s, a module constant in `state_precedence.py`) old, clear it, call `record.move()` and notify `StateEvent(State.CLEANING)`, then hand over to the library's handling as today. `record.dock()` clears `departure_armed_at` as well, so a resume answered by a fresh `isCharging: 1` cannot confirm later. An armed time older than the window is cleared and ignored.
 
 In the #120 log the confirmation arrives 3 s after the edge each time (`13:00:23.762` resume → `13:00:26.501` `isCharging: 0`; `14:00:23.824` → `14:00:27.022`). `move()` is what `handle_clean_info` calls on CLEANING, so the charge gate (#67) then sees the mower as off its charger.
@@ -82,26 +81,26 @@ A `pause` or `stop` sets no state. What follows it already says what the mower d
 
 **Registration.** The five new classes are added to the tuple `apply()` registers in `deebot_patch/__init__.py`, next to the existing job edges.
 
-### 2. The *Started by* sensor (`sensor.py`)
+### 2. The *Job started* event entity (`event.py`)
 
-**⚠ OPEN DECISION — pending Rickard:** Rickard chose this sensor on 2026-10-12 (over an attribute on `lawn_mower` and new event types on `event.<device>_last_mowing_job`). Review round 1 argues it cannot carry the use case: Home Assistant writes no `state_changed` when a sensor writes the value it already has, so after the first scheduled start a trigger on *Started by* never fires again; and a condition on it read when `lawn_mower` turns *mowing* sees the previous job's word on the O1200, whose CLEANING push lands 13 s before the start edge. Options: (a) replace the sensor with an event entity *Job started* (`event_types` = the trigger words) that fires once per start or resume edge; (b) keep the sensor, set it to *unknown* on an unrecognised word, and document the trigger-on-*mowing* plus condition-on-sensor pattern with its O1200 caveat (on the G1-800 the edge is notified before the confirmed CLEANING, 3 s later, so the condition is current there); (c) both. The rest of this section describes the sensor as first designed and is rewritten once this is decided.
+Decided by Rickard on 2026-10-13, after review round 1: an event entity, not a sensor. Rickard first chose a *Started by* enum sensor (2026-10-12); the review showed it cannot carry the use case, because Home Assistant writes no `state_changed` when a sensor writes the value it already has, so after the first scheduled start a trigger on it never fires again, and a condition on it read when `lawn_mower` turns *mowing* sees the previous job's word on the O1200, whose CLEANING push lands 13 s before the start edge. An event entity fires once per edge, whatever the previous one was.
 
-A new entity class, `EcovacsJobTriggerSensor`, added per mower in `async_setup_entry` next to `EcovacsActivitySensor` and `EcovacsMowingProgressSensor`, with the same gate as the activity sensor (`device.capabilities.device_type is DeviceType.MOWER`) and `device.capabilities.state` as the capability passed to `EcovacsEntity`. Like those two it listens to events no library capability describes, so it is a class of its own rather than an `ENTITY_DESCRIPTIONS` entry. It subscribes to `MowerJobEdgeEvent` and, on `phase in ("start", "resume")`, sets its value to the event's `trigger`.
+A new entity class, `EcovacsJobStartedEventEntity`, in `event.py` next to `EcovacsLastJobEventEntity`, added in `async_setup_entry` for every device whose `device.capabilities.device_type is DeviceType.MOWER` (the gate `EcovacsActivitySensor` uses), with `device.capabilities.state` as the capability passed to `EcovacsEntity`. It subscribes to `MowerJobEdgeEvent` and, on `phase in ("start", "resume")`, calls `_trigger_event(event.trigger, {"phase": event.phase})` and `async_write_ha_state()`.
 
-- **Key and translation key:** `job_trigger`; name *Started by*.
-- **Device class:** `SensorDeviceClass.ENUM`, `entity_category` none (it is meant for automations).
-- **Options:** the trigger words observed on a start or resume, verbatim: `schedule`, `app`, `continue`, `reborn`. Each has a translated state name in `strings.json` and `translations/en.json` (kept identical) and an icon in `icons.json`.
-- **Unknown word:** logged once at debug level and dropped, leaving the value as it was, the same pattern as `event.py`'s `_logged_triggers`. HA would reject a value outside `options`.
-- **After a restart:** *unknown* until the next start or resume. No `RestoreSensor`.
-- **Pause and stop:** ignored. The value is the word of the last start or resume edge, which is not always a new job: `reborn` arrives repeatedly within one run on the O800 RTK (the reason `sensor.py`'s `_NEW_JOB_TRIGGERS` excludes it), and `continue` is a resume after a charge break.
+- **Description:** `EventEntityDescription(key="job_started", translation_key="job_started", event_types=["schedule", "app", "continue", "reborn"])`, no `entity_category` (it is meant for automations).
+- **Event types:** the trigger words observed on a start or resume, verbatim, each with a translated state name under `entity.event.job_started.state_attributes.event_type.state` in `strings.json` and `translations/en.json` (kept identical), and an icon in `icons.json`. Proposed names: *Schedule*, *App*, *Continued*, *Restarted*.
+- **Event data:** `phase`, `"start"` or `"resume"`, so an automation can tell a new job from one continuing.
+- **Unknown word:** logged once at debug level and dropped, the same pattern as `EcovacsLastJobEventEntity._logged_triggers`. `EventEntity._trigger_event` raises on a type outside `event_types`.
+- **Replay guard:** the edge already fired is held by identity (`self._reported_start`), exactly as `_reported_ending` does in `EcovacsLastJobEventEntity` and for the same reason: `EventBus.subscribe` replays the last event to a new subscriber, and an entity-ID change re-adds the entity. `MowerJobEdgeEvent._seq` makes two genuine, equal-looking edges distinct objects.
+- **Pause and stop:** ignored; the stop already feeds *Last mowing job*.
 
-Why the words stay raw: the G1-800's `mow-schedule-resume` says `triggerType: schedule`, while the O1200's `mow-schedule-resume` in issue #73 said `trigger: continue`. A schedule continuing after a charge break and a schedule window opening are not told apart by one word across firmware, so translating both to "scheduled" would be a guess. The sensor reports what the mower said.
+What an event means: the mower announced that something started or resumed it. It is not always a new job: `reborn` arrives repeatedly within one run on the O800 RTK (the reason `sensor.py`'s `_NEW_JOB_TRIGGERS` excludes it), and `continue` is a resume after a charge break. The event fires at the announcement, before the departure is confirmed (§1): on the G1-800 it precedes the CLEANING by about 3 s, on the O1200 it follows the push by 13 s. An automation that must act only once the mower is out conditions on `lawn_mower` being *mowing*.
 
-`MowerJobEdgeEvent._seq` already makes every edge unequal to the last, so two equal resumes both reach the sensor.
+Why the words stay raw: the G1-800's `mow-schedule-resume` says `triggerType: schedule`, while the O1200's `mow-schedule-resume` in issue #73 said `trigger: continue`. A schedule continuing after a charge break and a schedule window opening are not told apart by one word across firmware, so translating both to "scheduled" would be a guess. The entity reports what the mower said; the README shows the #120 weather check as an automation triggered on the `schedule` and `continue` event types.
 
 ## Testing
 
-All new behaviour is in the patch layer or in `sensor.py`. The patch-layer tests run locally (`tests/deebot_patch/`, `-p no:homeassistant`); the sensor tests are `requires_ha` and CI is the source of truth for them.
+All new behaviour is in the patch layer or in `event.py`. The patch-layer tests run locally (`tests/deebot_patch/`, `-p no:homeassistant`); the entity and controller tests are `requires_ha` and CI is the source of truth for them.
 
 - **`tests/deebot_patch/test_messages.py`**
   - The #120 sequence replayed through the real handlers on a registered bus that starts docked, the payloads copied from the reporter's log: nothing at the 13:00 resume, CLEANING at the `onChargeState isCharging: 0` 3 s later, RETURNING at `return-normal-start`, DOCKED at `onChargeState isCharging: 1`, the same again from the 14:00 resume, RETURNING after the stop. The record's `docked` and `departure_armed_at` follow.
@@ -116,8 +115,8 @@ All new behaviour is in the patch layer or in `sensor.py`. The patch-layer tests
 - **`tests/deebot_patch/test_state_precedence.py`:** `arm_departure()`, the window, and `dock()` clearing the arm.
 - **`tests/deebot_patch/test_contract.py`:** the five new `NAME`s are registered by `apply()`.
 - **`tests/test_controller.py`:** a confirmed bury-point departure on a docked mower starts the poll, and the DOCKED at the next charge stops it.
-- **`tests/test_sensor.py`:** *Started by* takes the trigger of a start and of a resume, ignores pause and stop, keeps its value on an unknown word, and the progress sensor's existing tests still pass with `pause`/`resume` edges in the stream.
-- **`tests/test_event.py`:** a `pause` or `resume` edge fires no event.
+- **`tests/test_event.py`:** *Job started* fires the trigger word with its `phase` on a start and on a resume, fires nothing on pause and stop or on an unknown word (logged once), does not re-fire on a subscribe replay of the same edge object, does fire for a second equal-looking edge, and exists only on a MOWER device. *Last mowing job* fires nothing on a `pause` or `resume` edge.
+- **`tests/test_sensor.py`:** the progress sensor ignores `pause` and `resume` edges.
 - **`tests/test_translations.py` and the platform tests:** the new translation key and icon belong to a real entity, both directions.
 
 ## Documentation
@@ -126,6 +125,6 @@ All new behaviour is in the patch layer or in `sensor.py`. The patch-layer tests
 - `controller.py`, `on_status`: the comment "leaving is the one transition the mower has not been seen to drop" is refuted by #120; it says instead that a departure the mower does not push is written from the bury points (`messages.py`).
 - `messages.py` module docstring: the list of task bury points ("`{start,stop}`", "eight more messages") grows by the four edges and `return-normal-start`.
 - `MowerJobEdgeEvent` docstring: "Only the two edges this integration acts on are registered" and the `phase` description cover all four phases.
-- `sensor.py` module docstring: "the two additions" counts the new entity.
+- `event.py` module docstring: the entity gains a sibling, *Job started*.
 - `GetChargeStateMower` docstring: it now also confirms an armed departure on `isCharging: 0`.
-- README, the platform table: the `sensor` row's count goes from 16 to 17 and lists *Started by*, plus a short section on the sensor's values and the firmware difference in trigger words, with the weather-check automation from #120 as the example.
+- README, the platform table: the `event` row's count goes from 1 to 2 and lists *Job started*, plus a short section on its event types, the firmware difference in trigger words, and the weather-check automation from #120 as the example.
