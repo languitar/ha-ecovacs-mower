@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14, Home Assistant custom integration, `deebot-client==18.6.0` (pinned, do not change), pytest + pytest-asyncio (`asyncio_mode = auto`).
 
-**Spec:** `docs/superpowers/specs/2026-10-13-scheduled-run-state-design.md` (approved by Rickard 2026-10-14 at `cf17717`). Read it before your task; its Fixtures section is the source of every payload below.
+**Spec:** `docs/superpowers/specs/2026-10-13-scheduled-run-state-design.md` (approved by Rickard 2026-10-14 at `cf17717`; §2's "What an event means" paragraph was amended in `3fbacf2`, and that amendment is confirmed together with this plan). Read the current version on the branch before your task; its Fixtures section is the source of every payload below.
 
 ## Global Constraints
 
@@ -39,7 +39,7 @@ Inputs the spec implies but its own test list does not pin. Each has a test in t
 ## Tracks
 
 - **Main track:** Task 1 → Task 2 → Task 3 → Task 4 (Tasks 3 and 4 grow `messages.py` and `test_messages.py`).
-- **Side track:** Task 5 consumes only Task 1 (`MowerJobEdgeEvent.job_type`). Start it as soon as Task 1 is committed, in an isolated worktree reset onto Task 1's commit. Cherry-pick it back after Task 4; expect a small conflict in `CLAUDE.md` (Task 4 edits two bullets in "The patch layer…", Task 5 edits the "Entity platforms" paragraph).
+- **Side track:** Task 5 consumes only Task 1 (`MowerJobEdgeEvent.job_type`). Start it as soon as Task 1 is committed, in an isolated worktree reset onto Task 1's commit. The unskip plugin is git-ignored and therefore absent there: in that worktree use `PYTHONPATH="D:/private-projects/ha-ecovacs-mower/.claude/worktrees/fix-120-scheduled-run-state/.claude/unskip"` instead of `PYTHONPATH=.claude/unskip` (never copy it into a tracked path, never commit it). Cherry-pick it back after Task 4; expect a small conflict in `CLAUDE.md` (Task 4 edits two bullets in "The patch layer…", Task 5 edits the "Entity platforms" paragraph).
 
 ---
 
@@ -1219,13 +1219,20 @@ async def test_an_edge_after_a_pushed_state_away_from_the_dock_does_not_arm(
     ids=["fail-shaped", "charging"],
 )
 async def test_a_charge_push_other_than_an_unplug_stamps_nothing(
-    body: dict[str, Any],
+    clock: _Clock, body: dict[str, Any]
 ) -> None:
-    bus, record, _ = _docked_mower()
+    """Checked through the pair, not the stamp: both bodies reach dock(),
+    which clears charge_left_at anyway, so only a missing CLEANING proves
+    nothing was stamped."""
+    bus, record, published = _docked_mower()
 
+    _push(bus, OnMowScheduleResume, _G1800_RESUME_1300)
+    clock.now += 1
     _push(bus, OnChargeState, body)
+    await asyncio.sleep(0)
 
-    assert record.charge_left_at is None
+    assert _states(published) == [State.DOCKED]
+    assert record.departure_edge_at is not None
 
 
 async def test_a_start_edge_without_a_trigger_still_counts(clock: _Clock) -> None:
@@ -1379,7 +1386,10 @@ async def test_a_paired_departure_starts_the_poll_and_docking_stops_it() -> None
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `"D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/deebot_patch/test_messages.py -p no:homeassistant -q`
-Expected: every test using the `clock` fixture errors with `AttributeError: <module ...messages> has no attribute 'monotonic'`; `test_a_charge_push_other_than_an_unplug_stamps_nothing` and `test_pause_and_stop_edges_publish_no_state` pass already (they pin behaviour that must not change).
+Expected: every test using the `clock` fixture errors with `AttributeError: <module ...messages> has no attribute 'monotonic'`; `test_pause_and_stop_edges_publish_no_state` passes already (it pins behaviour that must not change).
+
+Run: `PYTHONPATH=.claude/unskip "D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/test_controller.py -p no:homeassistant -p unskip_win32 -q`
+Expected: `test_a_paired_departure_starts_the_poll_and_docking_stops_it` FAILS at `track.assert_called_once()` after the unplug; the six `fixture 'hass' not found` errors are the baseline.
 
 - [ ] **Step 3: Implement**
 
@@ -2135,7 +2145,9 @@ async def test_job_started_exists_only_on_a_mower() -> None:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `PYTHONPATH=.claude/unskip "D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/test_event.py -p no:homeassistant -p unskip_win32 -q`
+This task runs in the side-track worktree, where `.claude/unskip` does not exist (see Tracks), so its `PYTHONPATH` points at the main worktree's copy.
+
+Run: `PYTHONPATH="D:/private-projects/ha-ecovacs-mower/.claude/worktrees/fix-120-scheduled-run-state/.claude/unskip" "D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/test_event.py -p no:homeassistant -p unskip_win32 -q`
 Expected: the new tests fail with `ImportError: cannot import name 'EcovacsJobStartedEventEntity'`.
 
 - [ ] **Step 3: Implement**
@@ -2168,8 +2180,10 @@ Below `_TRIGGER_EVENT_TYPES`, add:
 # mow-schedule-resume says ``schedule`` where the O1200's says ``continue``,
 # so one "scheduled" type would be a guess, and ``job_type`` in the event
 # data already names the schedule's job on every firmware. A start from Home
-# Assistant is not here: its word is unobserved, so until it is seen it
-# fires nothing but a debug line.
+# Assistant may fire nothing yet: its word is unobserved. It is likely
+# ``app``, as on the only observed edge of such a job (``mow-auto-stop``,
+# issue #74), which would fire with ``job_type: auto``; any other word gives
+# a debug line until it is seen and added.
 _JOB_START_TRIGGERS = ("schedule", "app", "continue", "reborn")
 ```
 
@@ -2308,7 +2322,7 @@ forty-six on the G1-800, which alone gets the "Mow border" button — plus four
 | `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
 ```
 
-and insert this section after the "When a job ends" section, before `### How far along the mower is`, wrapped at about 80 columns like the rest of the file:
+and insert this section after the "When a job ends" section, before `### How far along the mower is`, wrapped at about 80 columns like the rest of the file (the README keeps its own wrapping; the rule against hard-wrapped markdown covers issue, PR and thread text, not this file):
 
 ````markdown
 ### When a job starts
@@ -2323,8 +2337,9 @@ for a zone job, `border` for an edge cut and `auto` for a plain start.
 Use `job_type` to recognise the schedule's job, not the event type. The same
 announcement carries different words on different firmware: a G1-800 says
 `schedule` when a schedule window opens, while an O1200 says `continue` when
-its schedule resumes after a charge break. A start from Home Assistant fires
-nothing yet, because nobody has seen which word it carries.
+its schedule resumes after a charge break. A start from Home Assistant may
+fire nothing yet, because nobody has seen which word it carries; if it is
+`app`, as is likely, it fires with `job_type` `auto`.
 
 The event fires at the announcement: on a G1-800 about three seconds before
 the mower leaves its charger and reads `mowing`, on an O1200 about 13 seconds
@@ -2366,9 +2381,11 @@ In `CLAUDE.md`, the "Entity platforms" paragraph (line 74): change `The others (
  `event` is not declarative at all: its two classes, *Last mowing job* and *Job started*, both subscribe to `MowerJobEdgeEvent`, which no `capability_fn` can describe.
 ```
 
+and in the next paragraph change `The per-area parameter entities in `area_numbers.py` are the other exception:` to `The per-area parameter entities in `area_numbers.py` are another exception:`.
+
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `PYTHONPATH=.claude/unskip "D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/test_event.py tests/test_translations.py -p no:homeassistant -p unskip_win32 -q`
+Run: `PYTHONPATH="D:/private-projects/ha-ecovacs-mower/.claude/worktrees/fix-120-scheduled-run-state/.claude/unskip" "D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/test_event.py tests/test_translations.py -p no:homeassistant -p unskip_win32 -q`
 Expected: all pass.
 
 Run: `"D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -c "import json; a=json.load(open('custom_components/ecovacs_mower/strings.json',encoding='utf-8')); b=json.load(open('custom_components/ecovacs_mower/translations/en.json',encoding='utf-8')); print(a==b)"`
