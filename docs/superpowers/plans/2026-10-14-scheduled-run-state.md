@@ -18,7 +18,8 @@
 - `strings.json` and `translations/en.json` must stay byte-identical in content (`test_translations.py`). Never create `sv.json`.
 - Do not bump `manifest.json` and do not touch the `deebot-client` pin.
 - Conventional commits (`feat:`, `fix:`, `docs:`, `test:`), subject ending in `(#120)`. No AI attribution of any kind, no `Co-Authored-By`, no `Claude-Session:` trailer.
-- Edit with the Edit/Write tools. The working copy is LF and git converts to CRLF (`core.autocrlf=true`); do not convert line endings by hand.
+- Edit with the Edit/Write tools. The working copy is CRLF and the repository stores LF (`core.autocrlf=true`); do not convert line endings by hand.
+- Line numbers in this plan are as of `e3b6a93` and shift as earlier tasks add code; find each place by the symbol or text quoted next to it.
 - Local test runner (Windows, from the worktree root):
   - Patch layer: `"D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest tests/deebot_patch/ -p no:homeassistant -q`
   - HA-layer files (`requires_ha`): `PYTHONPATH=.claude/unskip "D:/private-projects/ha-ecovacs-mower/v314/Scripts/python.exe" -m pytest <files> -p no:homeassistant -p unskip_win32 -q`. The plugin `.claude/unskip/unskip_win32.py` already exists in the worktree and is git-ignored; never commit it. Tests that need the `hass` fixture error with `fixture 'hass' not found` locally; that is expected, CI runs them. New tests in this plan avoid that fixture.
@@ -1236,7 +1237,9 @@ async def test_a_start_edge_without_a_trigger_still_counts(clock: _Clock) -> Non
     _push(bus, OnChargeState, _UNPLUGGED)
     await asyncio.sleep(0)
 
-    assert result.state is HandlingState.ANALYSE
+    # Through handle(), the library's _handle_error_or_analyse wrapper turns
+    # the handler's ANALYSE into ANALYSE_LOGGED on the way out.
+    assert result.state is HandlingState.ANALYSE_LOGGED
     assert _states(published) == [State.DOCKED, State.CLEANING]
 
 
@@ -1856,6 +1859,15 @@ paired with the mower's own ``onChargeState`` unplug push writes CLEANING, and
 ``OnReturnNormalStart`` writes RETURNING for the trip home.
 ```
 
+and at the end of the ``MowerJobEdgeEvent`` paragraph of the module docstring, after `the library's own start command sends (issue #74).`, add:
+
+```
+``OnReturnNormalStart`` handles one more task bury point,
+``onFwBuryPoint-bd_task-return-normal-start``. It is not a job edge and
+publishes no ``MowerJobEdgeEvent``; it writes RETURNING for the trip home
+(issue #120).
+```
+
 In `deebot_patch/__init__.py`, add `OnReturnNormalStart` to the `from .messages import (...)` block and to the `apply()` tuple, after `OnRainDelay` in both.
 
 In `CLAUDE.md`, the `messages.py` bullet (line 45) becomes:
@@ -2197,10 +2209,13 @@ class EcovacsJobStartedEventEntity(
     again. This fires once per edge, whatever the previous one was.
 
     It fires at the announcement, before the departure is confirmed: on the
-    G1-800 about 3 s before the state reads mowing, on the O1200 13 s after.
-    ``continue`` is a resume after a charge break and ``reborn`` repeats
-    within one run on the O800 RTK, so an event is not always a new job;
-    ``phase`` in the event data says which.
+    G1-800 about 3 s before the state reads mowing, on the O1200 about 13 s
+    after. So a condition on the mower mowing, checked when this fires, is
+    always false on the G1-800; an automation that must act once the mower
+    is out waits for it in its actions. ``continue`` is a resume after a
+    charge break and ``reborn`` repeats within one run on the O800 RTK, so
+    an event is not always a new job; ``phase`` in the event data says
+    which.
 
     ``capabilities.state`` is passed only because ``EcovacsEntity`` wants a
     capability; nothing subscribes to its event here.
@@ -2280,10 +2295,17 @@ In `icons.json`, inside `"entity": {"event": {...}}`, before `"last_job"`:
       },
 ```
 
-In `README.md`, replace the `event` row of the platform table (line 240) with:
+In `README.md`, the intro above the platform table (lines 227-228) counts the fixed entities; one more on every mower makes it:
 
 ```markdown
-| `event` | 1, 2 on a mower | Last mowing job (finished / finished with warnings / manually stopped — see below) and, on a mower, Job started (what started or resumed the job — see below) |
+Forty-five fixed entities on the mower's device page, across eight platforms —
+forty-six on the G1-800, which alone gets the "Mow border" button — plus four
+```
+
+(only those two lines change; the sentence continues as before). Replace the `event` row of the platform table (line 240) with:
+
+```markdown
+| `event` | 2 | Last mowing job (finished / finished with warnings / manually stopped — see below) and Job started (what started or resumed the job — see below) |
 ```
 
 and insert this section after the "When a job ends" section, before `### How far along the mower is`, wrapped at about 80 columns like the rest of the file:
@@ -2304,12 +2326,16 @@ announcement carries different words on different firmware: a G1-800 says
 its schedule resumes after a charge break. A start from Home Assistant fires
 nothing yet, because nobody has seen which word it carries.
 
-The event fires at the announcement, a few seconds before the mower leaves
-its charger on a G1-800 and a few seconds after it starts on an O1200. If an
-automation must only act once the mower is out, add a condition on
-`lawn_mower.<device>` being `mowing`.
+The event fires at the announcement: on a G1-800 about three seconds before
+the mower leaves its charger and reads `mowing`, on an O1200 about 13 seconds
+after it started. A condition on `lawn_mower.<device>` being `mowing` is
+checked when the event fires, so on a G1-800 it is always false. If an
+automation must only act once the mower is out, wait for it in the actions
+instead.
 
-For example, sending the mower back when the schedule starts it in the rain:
+For example, sending the mower back when the schedule starts it in the rain.
+The wait matters on a G1-800: a dock command sent while it is still on its
+charger may well do nothing, and the mower leaves a few seconds later anyway.
 
 ```yaml
 automation:
@@ -2325,6 +2351,9 @@ automation:
         entity_id: weather.home
         state: [rainy, pouring, lightning-rainy]
     actions:
+      - wait_template: "{{ is_state('lawn_mower.my_goat', 'mowing') }}"
+        timeout: "00:02:00"
+        continue_on_timeout: false
       - action: lawn_mower.dock
         target:
           entity_id: lawn_mower.my_goat
