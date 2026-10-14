@@ -39,7 +39,7 @@ Inputs the spec implies but its own test list does not pin. Each has a test in t
 ## Tracks
 
 - **Main track:** Task 1 → Task 2 → Task 3 → Task 4 (Tasks 3 and 4 grow `messages.py` and `test_messages.py`).
-- **Side track:** Task 5 consumes only Task 1 (`MowerJobEdgeEvent.job_type`). Start it as soon as Task 1 is committed, in an isolated worktree reset onto Task 1's commit. The unskip plugin is git-ignored and therefore absent there: in that worktree use `PYTHONPATH="D:/private-projects/ha-ecovacs-mower/.claude/worktrees/fix-120-scheduled-run-state/.claude/unskip"` instead of `PYTHONPATH=.claude/unskip` (never copy it into a tracked path, never commit it). Cherry-pick it back after Task 4; expect a small conflict in `CLAUDE.md` (Task 4 edits two bullets in "The patch layer…", Task 5 edits the "Entity platforms" paragraph).
+- **Side track:** Task 5 consumes only Task 1 (`MowerJobEdgeEvent.job_type`). Start it as soon as Task 1 is committed, in an isolated worktree reset onto Task 1's commit. The unskip plugin is git-ignored and therefore absent there: in that worktree use `PYTHONPATH="D:/private-projects/ha-ecovacs-mower/.claude/worktrees/fix-120-scheduled-run-state/.claude/unskip"` instead of `PYTHONPATH=.claude/unskip` (never copy it into a tracked path, never commit it). Cherry-pick it back after Task 4; a conflict in `CLAUDE.md` is possible though the hunks are far apart (Task 4 edits two bullets in "The patch layer…", Task 5 the "Entity platforms" paragraph and the one after it); keep both edits.
 
 ---
 
@@ -389,6 +389,21 @@ with
     there, ``spotarea`` here), and the two are not merged.
 ```
 
+and, further down the same docstring, replace
+
+```
+    ``mowed_area`` and ``work_area`` are square metres as floats, present on a
+    stop and absent on a start. They are not converted to the centimetre
+```
+
+with
+
+```
+    ``mowed_area`` and ``work_area`` are square metres as floats, present on a
+    stop and, on the firmware that sends them there, on a pause (issue #120),
+    and absent on a start or resume. They are not converted to the centimetre
+```
+
 In `_OnMowJobEdge`, add the class variable and a docstring paragraph, and pass it on:
 
 ```python
@@ -719,8 +734,10 @@ class MowerStateRecord:
     can stay on the charger in a rain delay, and an unplug can be a full
     battery — so CLEANING is written only when both arrive within
     ``DEPARTURE_WINDOW``, in either order. The handlers that report a state
-    cancel both, since a reported state is better evidence than either half;
-    ``dock()`` clears only the unplug, and ``move()`` neither.
+    cancel both, since a reported state is better evidence than either half,
+    and so does a pause or stop bury point: the job it announced paused or
+    ended before the mower left. ``dock()`` clears only the unplug, and
+    ``move()`` neither.
     """
 
     docked: bool = False
@@ -809,7 +826,7 @@ git commit -m "feat: record the two halves of a departure from the dock (#120)"
 
 **Interfaces:**
 - Consumes: Task 1's `OnMowScheduleResume`, `OnMowSchedulePause`, the `_G1800_*`/`_O1200_*` fixtures; Task 2's `DEPARTURE_WINDOW`, `note_departure_edge()`, `note_charge_left()`, `cancel_departure()`.
-- Produces: `messages.monotonic` (module-level name the tests patch); in `test_messages.py`: the `clock` fixture, `_Clock`, `_push(bus, message, body)`, `_last_state(bus)`, `_docked_mower()` and the fixtures `_UNPLUGGED`, `_PLUGGED_IN`, `_O1200_PUSH_0900`, `_O1200_PUSH_1147`. Task 4 uses all of them.
+- Produces: `messages.monotonic` (module-level name the tests patch); in `test_messages.py`: the `clock` fixture, `_Clock`, `_push(bus, message, body)`, `_last_state(bus)`, `_docked_mower()`, `_states(published)`, the fixtures `_UNPLUGGED` and `_PLUGGED_IN` (all used by Task 4), and, used only here, `_O1200_PUSH_0900`, `_O1200_PUSH_1147`, `_POS_AWAY_FROM_THE_DOCK`, `_report_paused`, `_report_go_charging`, `_report_alert`, `_answer_charging`, `_push_charging`, `_report_docked`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -828,7 +845,7 @@ from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
 )
 ```
 
-Append after the Task 1 tests:
+Append at the end of the file:
 
 ```python
 # The charge pushes and the O1200's own state pushes around a departure, from
@@ -1645,7 +1662,7 @@ def test_the_end_of_the_return_trip_is_not_registered() -> None:
     assert "onFwBuryPoint-bd_task-return-normal-stop" not in MESSAGES
 ```
 
-Append:
+Append at the end of the file:
 
 ```python
 _G1800_RETURN_1330 = {
@@ -2180,10 +2197,11 @@ Below `_TRIGGER_EVENT_TYPES`, add:
 # mow-schedule-resume says ``schedule`` where the O1200's says ``continue``,
 # so one "scheduled" type would be a guess, and ``job_type`` in the event
 # data already names the schedule's job on every firmware. A start from Home
-# Assistant may fire nothing yet: its word is unobserved. It is likely
-# ``app``, as on the only observed edge of such a job (``mow-auto-stop``,
-# issue #74), which would fire with ``job_type: auto``; any other word gives
-# a debug line until it is seen and added.
+# Assistant may fire nothing yet: its word is unobserved, and so is the
+# mow-auto-start edge itself. Unconfirmed guess: ``app``, the word on the
+# only observed edge of such a job (``mow-auto-stop``, issue #74), which
+# would fire with ``job_type: auto``. Any word not listed here gives a debug
+# line until it is seen and added.
 _JOB_START_TRIGGERS = ("schedule", "app", "continue", "reborn")
 ```
 
@@ -2338,8 +2356,7 @@ Use `job_type` to recognise the schedule's job, not the event type. The same
 announcement carries different words on different firmware: a G1-800 says
 `schedule` when a schedule window opens, while an O1200 says `continue` when
 its schedule resumes after a charge break. A start from Home Assistant may
-fire nothing yet, because nobody has seen which word it carries; if it is
-`app`, as is likely, it fires with `job_type` `auto`.
+fire nothing yet, because nobody has seen which word it carries.
 
 The event fires at the announcement: on a G1-800 about three seconds before
 the mower leaves its charger and reads `mowing`, on an O1200 about 13 seconds
