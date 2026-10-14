@@ -2337,7 +2337,7 @@ async def test_an_o1200_departure_notifies_cleaning_once(
 ) -> None:
     """The O1200 pushes its own CLEANING before both halves, so the pair
     writes nothing there (2026-10-12: 09:00:53, 11:47:35)."""
-    bus, _, published = _docked_mower()
+    bus, record, published = _docked_mower()
 
     _push(bus, OnScheduleTaskInfo, push)
     for message, body in steps:
@@ -2346,6 +2346,11 @@ async def test_an_o1200_departure_notifies_cleaning_once(
     await asyncio.sleep(0)
 
     assert _states(published) == [State.DOCKED, State.CLEANING]
+    # The bus drops an equal CLEANING, so the list above would also pass if the
+    # pair re-asserted it. The guard is the push keeping the edge from arming:
+    # the unplug is left waiting for a partner instead of completing a pair.
+    assert record.departure_edge_at is None
+    assert record.charge_left_at is not None
 
 
 async def test_a_repeated_unplug_after_a_completed_pair_changes_nothing(

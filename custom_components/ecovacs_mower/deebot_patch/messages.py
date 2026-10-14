@@ -205,8 +205,8 @@ def _as_area(value: Any) -> float | None:
 def _may_be_on_charger(event_bus: EventBus, record: MowerStateRecord) -> bool:
     """Whether a start or resume edge may still be announcing a departure.
 
-    Docked as far as the record knows, or nothing but DOCKED has been
-    published: after a restart the record starts undocked, and ``OnPos`` can
+    Docked as far as the record knows, or the last state published is DOCKED
+    (or none has been): after a restart the record starts undocked, and ``OnPos`` can
     clear ``record.docked`` without publishing anything. A pushed CLEANING,
     PAUSED or RETURNING says the mower is already out, and an edge arriving
     after it — the O1200's start edge lands 13 s after its own push — must not

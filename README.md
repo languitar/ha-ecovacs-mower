@@ -647,7 +647,7 @@ automation:
     triggers:
       - trigger: state
         entity_id: event.my_goat_job_started
-        not_from: [unknown, unavailable]
+        not_from: unavailable
     conditions:
       - condition: template
         value_template: "{{ trigger.to_state.attributes.job_type == 'schedule' }}"
