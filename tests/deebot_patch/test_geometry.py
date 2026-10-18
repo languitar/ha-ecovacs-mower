@@ -382,6 +382,34 @@ def test_parse_area_info_v117_all_ids_only_is_still_detected() -> None:
     assert area.nogo == []  # section 2 present, no items: no no-go zones
 
 
+def test_parse_area_info_chain_keeps_every_area_of_a_multi_area_map() -> None:
+    # A GOAT O800 RTK (9bts2s, fw 1.13.8) whose map holds three lawns sends
+    # one entry per (area, section): three section-5 outlines, and obstacles
+    # and corridors per area. Keyed by section alone, every area but the
+    # last was overwritten, so the map showed one lawn of three (issue #41).
+    blob = json.dumps(
+        [
+            ["1", "3", "1", "1;0,0;4(3)6(3)8(3)2(2)"],
+            ["2", "3", "1", "1;5000,0;4(4)6(4)8(4)2(3)"],
+            ["3", "3", "1", "1;9000,0;4(5)6(5)8(5)2(4)"],
+            ["1", "5", "1", "1;0,0;4(9)6(9)8(9)2(8)"],
+            ["2", "5", "1", "2;5000,0;4(7)6(7)8(7)2(6)"],
+            ["3", "5", "1", "3;9000,0;4(5)6(5)8(5)2(4)"],
+            ["1", "6", "1", "1;0,500;4(2)6(2)8(2)"],
+            ["2", "6", "1", "2;5000,500;4(2)6(2)8(2)"],
+        ]
+    ).encode()
+    area = parse_area_info(blob)
+    # One outline per area, in the order the mower listed them.
+    assert [outline[0] for outline in area.map_info.boundaries] == [
+        (0, 0),
+        (5000, 0),
+        (9000, 0),
+    ]
+    assert len(area.obstacles) == 3
+    assert len(area.map_info.corridors) == 2
+
+
 def test_parse_area_info_v113_section_4_point_list_is_not_the_v117_dialect() -> None:
     # A GOAT O800 RTK (9bts2s) on firmware 1.13.8 fills section 4 with point
     # lists while every other section of the same blob stays chain-coded.

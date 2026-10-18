@@ -308,14 +308,35 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
 def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
     """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
 
-    Entry format: ``["<mid>", "<section>", "<flag>", *items]`` where flag
+    Entry format: ``["<area>", "<section>", "<flag>", *items]`` where flag
     "0" means "no update" for that section — represented as None so stored
     geometry is never wiped by a heartbeat.
+
+    **The leading field is the area id, not the map id.** The map is named
+    by the message envelope, and a mower whose map holds three lawns sends
+    one entry per (area, section) pair, so the same section number arrives
+    three times. Every capture this parser was written from had a single
+    area, where the two readings are indistinguishable; a GOAT O800 RTK
+    (``9bts2s``, fw 1.13.8) with three lawns is what told them apart
+    (issue #41). Keyed by section alone, each area's entry replaced the one
+    before it and only the last area survived — for the outline that meant
+    two thirds of the map silently disappeared.
+
+    An area's items are therefore accumulated into their section instead of
+    replacing it. One consequence is worth naming: a section is published
+    as soon as *any* area updates it, and what is published then holds only
+    the areas that sent geometry in that blob, because the events carry
+    complete sets. Both blobs captured from that mower move a section's
+    flag together across all three areas — one full snapshot, one
+    obstacles-only heartbeat — so an area updating a section on its own is
+    not a shape anything has shown. Keeping per-area state all the way into
+    ``MowerMap`` is what would make it impossible, and that is a much
+    larger change than this one.
     """
     sections: dict[str, list[str]] = {}
     for entry in entries:
         if len(entry) > 2 and entry[2] == "1":
-            sections[entry[1]] = entry[3:]
+            sections.setdefault(entry[1], []).extend(entry[3:])
 
     # ponytail: sections 1 and 2 are merged into one zones list — every
     # captured onArI updates them together (both flag "1" or both "0").
