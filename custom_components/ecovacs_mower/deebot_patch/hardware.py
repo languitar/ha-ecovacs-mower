@@ -56,7 +56,10 @@ class MowerProfile:
     look the same as on a class where it was.
 
     ``area_parameters`` gives the class the ``MowerAreaEvent`` refresh and the
-    per-area number entities. ``zone_mowing`` gives it ``MowArea`` as its
+    per-area number entities. ``area_names`` gives it the same refresh
+    without the entities: the names and their label points come from
+    ``getAreaSet``, while the entities need the raw parameter semantics
+    validated on the class, which is a separate claim. ``zone_mowing`` gives it ``MowArea`` as its
     ``clean.action.area`` capability, which is what the ``mow_area`` service
     checks for. ``border_mowing`` gives it the ``mow_border`` button; that one
     gates an entity rather than a capability, because ``Capabilities`` has no
@@ -65,6 +68,7 @@ class MowerProfile:
 
     device_class: str
     area_parameters: bool = False
+    area_names: bool = False
     zone_mowing: bool = False
     border_mowing: bool = False
 
@@ -123,6 +127,11 @@ class MowerProfile:
 # How each flag was validated:
 #   area_parameters — e4gqia: raw-to-HA mappings confirmed on the A1600 LiDAR
 #                     Pro; see docs/area-parameter-capability.md.
+#   area_names      — 9bts2s: the ar response captured on a three-lawn O800
+#                     RTK, firmware 1.13.8 (issue #41), after renaming the
+#                     areas in the app:
+#                     [["1","1","Hinten","","-16900","13900","0-0"], …] —
+#                     ids, the new names, and a point inside each area.
 #   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
 #                     77atlz: two zone runs on the G1-800, firmware 1.36.208,
@@ -145,7 +154,7 @@ class MowerProfile:
 #                     has the flag — see border.py.
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
-    "9bts2s": MowerProfile("9bts2s"),
+    "9bts2s": MowerProfile("9bts2s", area_names=True),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile("77atlz", zone_mowing=True, border_mowing=True),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
@@ -313,6 +322,10 @@ async def patch_device_info(class_: str) -> None:
         # One area event represents the whole area capability. The two protocol
         # reads populate one authoritative raw snapshot before notifying it.
         events[MowerAreaEvent] = [GetAreaParameter(), GetAreaSet()]
+    elif profile.area_names:
+        # Names and label points only: getAreaParameter has no validated
+        # reading on this class, and nothing here needs one.
+        events[MowerAreaEvent] = [GetAreaSet()]
 
     object.__setattr__(patched, "_events", MappingProxyType(events))
 

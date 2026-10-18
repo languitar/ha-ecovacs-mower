@@ -693,10 +693,10 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     mower_map = controller.maps["did-1"]
     assert mower_map.boundaries == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
-    # Eager subscriptions: 5 map events + PositionsEvent. EventBus.notify
-    # drops events nobody subscribes to, so waiting for the entity to
-    # subscribe would lose data.
-    assert device.events.subscribe.call_count == 6
+    # Eager subscriptions: 5 map events, MowerAreaEvent for the labels,
+    # and PositionsEvent. EventBus.notify drops events nobody subscribes
+    # to, so waiting for the entity to subscribe would lose data.
+    assert device.events.subscribe.call_count == 7
 
 
 async def test_setup_map_survives_corrupt_store() -> None:

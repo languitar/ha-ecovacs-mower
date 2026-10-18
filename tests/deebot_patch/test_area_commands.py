@@ -229,6 +229,48 @@ def test_get_area_set_applies_names_once_the_stream_completes() -> None:
     event_bus.notify.assert_called_once()
 
 
+def test_get_area_set_reads_the_label_point_of_each_area() -> None:
+    # Verbatim rows a three-lawn GOAT O800 RTK (9bts2s, fw 1.13.8)
+    # answered after its areas were renamed in the app (issue #41). The
+    # pair in columns 5 and 6 is where the mower puts the name.
+    event_bus = Mock()
+    command = GetAreaSet()
+    decoded = [
+        ["1", "1", "Hinten", "", "-16900", "13900", "0-0"],
+        ["2", "2", "Vorgarten", "", "9700", "6400", "0-0"],
+        ["3", "3", "Einfahrt", "", "11950", "19750", "0-0"],
+    ]
+
+    with _buffer_returning(b"decoded-blob"):
+        with patch(
+            "custom_components.ecovacs_mower.deebot_patch.commands.orjson.loads",
+            return_value=decoded,
+        ):
+            command._handle_response(event_bus, _multipart_ok_response())
+
+    areas = _areas_for(event_bus)
+    assert [(a.name, a.label) for a in areas.values()] == [
+        ("Hinten", (-16900, 13900)),
+        ("Vorgarten", (9700, 6400)),
+        ("Einfahrt", (11950, 19750)),
+    ]
+
+
+def test_get_area_set_keeps_an_area_without_a_label_point() -> None:
+    # The shorter rows every earlier capture carried: a name, no point.
+    event_bus = Mock()
+    command = GetAreaSet()
+
+    with _buffer_returning(b"decoded-blob"):
+        with patch(
+            "custom_components.ecovacs_mower.deebot_patch.commands.orjson.loads",
+            return_value=[[1, 12, "North lawn"]],
+        ):
+            command._handle_response(event_bus, _multipart_ok_response())
+
+    assert _areas_for(event_bus)["12"].label is None
+
+
 def test_get_area_set_removes_an_area_no_longer_reported() -> None:
     event_bus = Mock()
     _areas_for(event_bus)["12"] = MowerArea("12", name="North lawn")

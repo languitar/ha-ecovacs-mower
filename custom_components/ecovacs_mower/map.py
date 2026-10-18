@@ -27,6 +27,9 @@ class MowerMap:
         # The passages joining two areas, from onMI. Open paths, not
         # rings, like the flush edges above.
         self.corridors: list[Polygon] = []
+        # Each area's name at the point the mower itself puts it, from
+        # getAreaSet. Ordered by area id so the rendering is stable.
+        self.labels: list[tuple[Point, str]] = []
         self.obstacles: list[Polygon] = []
         self.nogo_zones: list[Polygon] = []
         self.lanes: dict[tuple[str, int], list[Segment]] = {}
@@ -77,6 +80,10 @@ class MowerMap:
             self.flush_edges = flush_edges
         if corridors is not None:
             self.corridors = corridors
+
+    def update_labels(self, labels: list[tuple[Point, str]]) -> None:
+        """Replace the area labels (the inventory is a complete set)."""
+        self.labels = labels
 
     def update_obstacles(self, obstacles: list[Polygon]) -> None:
         """Replace the obstacle set (events carry the complete set)."""
@@ -133,6 +140,7 @@ class MowerMap:
             "zones": self.zones,
             "flush_edges": self.flush_edges,
             "corridors": self.corridors,
+            "labels": [[list(point), name] for point, name in self.labels],
             "obstacles": self.obstacles,
             "nogo_zones": self.nogo_zones,
             "lanes": [
@@ -184,6 +192,10 @@ class MowerMap:
         mower_map.covered = [polygon(p) for p in data.get("covered", [])]
         mower_map.covered_holes = [
             polygon(p) for p in data.get("covered_holes", [])
+        ]
+        mower_map.labels = [
+            ((int(point[0]), int(point[1])), str(name))
+            for point, name in data.get("labels", [])
         ]
         mower_map.lanes = {
             (str(zone), int(row)): [

@@ -63,6 +63,7 @@ from .deebot_patch import (
     register_mower_bus,
     verify_capabilities,
 )
+from .deebot_patch.areas import MowerAreaEvent
 from .deebot_patch.commands import GetPosMower
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
 from .deebot_patch.map_messages import (
@@ -304,6 +305,18 @@ class EcovacsController:
             )
             save()
 
+        async def on_areas(event: MowerAreaEvent) -> None:
+            # Only the areas the mower gave both a name and a point for:
+            # a label without either has nothing to draw.
+            mower_map.update_labels(
+                [
+                    (area.label, area.name)
+                    for area in sorted(event.areas, key=lambda a: a.area_id)
+                    if area.label is not None and area.name
+                ]
+            )
+            save()
+
         async def on_obstacles(event: MowerObstaclesEvent) -> None:
             mower_map.update_obstacles(event.obstacles)
             save()
@@ -338,6 +351,7 @@ class EcovacsController:
         device.events.subscribe(MowerCoverageEvent, on_coverage)
         device.events.subscribe(MowerCoveredAreaEvent, on_covered)
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
+        device.events.subscribe(MowerAreaEvent, on_areas)
         device.events.subscribe(PositionsEvent, on_positions)
 
     def _setup_fault_latch(self, device: Device) -> None:

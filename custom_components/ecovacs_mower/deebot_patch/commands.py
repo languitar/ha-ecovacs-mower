@@ -930,10 +930,12 @@ class GetAreaSet(CustomCommand):
             reported_ids.add(area_id)
             name = row[2] if len(row) >= 3 else None
             name = name.strip() if isinstance(name, str) else None
+            label = _label_from(row)
             current = areas.get(area_id, MowerArea(area_id))
             areas[area_id] = MowerArea(
                 area_id=current.area_id,
                 name=name or current.name,
+                label=label or current.label,
                 mow_height_level=current.mow_height_level,
                 cut_mode=current.cut_mode,
                 obstacle_height=current.obstacle_height,
@@ -951,6 +953,22 @@ class GetAreaSet(CustomCommand):
                 del areas[area_id]
         _notify(event_bus)
         return HandlingResult.success()
+
+
+def _label_from(row: list[Any]) -> tuple[int, int] | None:
+    """The point columns 5 and 6 of an ``ar`` row put the name at.
+
+    A GOAT O800 RTK (``9bts2s``, fw 1.13.8) answers rows shaped
+    ``["1","1","Hinten","","-16900","13900","0-0"]``, where that pair is
+    inside the area it names. A row without them, or with something that
+    is not a number there, simply has no label point.
+    """
+    if len(row) < 6:
+        return None
+    try:
+        return (int(row[4]), int(row[5]))
+    except (TypeError, ValueError):
+        return None
 
 
 class SetAreaParameter(ExecuteCommand):
