@@ -378,6 +378,28 @@ def test_parse_area_info_v117_all_ids_only_is_still_detected() -> None:
     assert area.nogo == []  # section 2 present, no items: no no-go zones
 
 
+def test_parse_area_info_v113_section_4_point_list_is_not_the_v117_dialect() -> None:
+    # A GOAT O800 RTK (9bts2s) on firmware 1.13.8 fills section 4 with point
+    # lists while every other section of the same blob stays chain-coded.
+    # The coordinate scan found the comma in section 4's third field and
+    # routed the whole blob through the 1.17 parser, which then read the
+    # chain codes as point lists: obstacles came out as one-point polygons
+    # and section 5's boundary was dropped. Only the heartbeats that carry a
+    # section-4 update are affected, so one mower flips dialect blob to blob.
+    blob = json.dumps(
+        [
+            ["1", "3", "1", "1;100,200;4(3)6(3)8(3)2(2)"],
+            ["1", "4", "1", "1", "1;-21800,7350;-21750,7350;-21750,7400"],
+            ["1", "5", "1", "1;0,0;4(4)6(4)8(4)2(3)"],
+        ]
+    ).encode()
+    area = parse_area_info(blob)
+    assert area.map_info.boundary is not None
+    assert len(area.map_info.boundary) > 1
+    assert len(area.obstacles) == 1
+    assert len(area.obstacles[0]) > 1
+
+
 def test_parse_area_info_v113_obstacles_only_still_chain_parsed() -> None:
     # A 1.13 blob never has a 2-element entry (the flag at index 2 is
     # mandatory), so it must not trip the new v117 length-2 signal.

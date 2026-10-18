@@ -218,10 +218,22 @@ def _is_point_list_dialect(entries: list[list[str]]) -> bool:
     and ``<id>;<x,y>;<x,y>;…`` from 1.17 on, so the third field decides.
     Scanning from index 2 covers both layouts: 1.13's section flag sits
     there but holds no ";", so it never matches.
+
+    Section 4 is left out of that scan. It is empty in every capture the
+    rest of this parser was written from, but an O800 RTK on firmware
+    1.13.8 fills it with point lists — ``<id>;<x,y>;<x,y>;…`` — while
+    every other section of the same blob is chain-coded. Scanning it
+    reports the 1.17 dialect for a 1.13 blob, and only on the heartbeats
+    where section 4 carries an update, so one mower flips dialect from
+    blob to blob. It can discriminate nothing anyway: no 1.17 capture has
+    content there either, and sections 1-3 carry the point lists that
+    identify that dialect.
     """
     if any(len(entry) == 2 for entry in entries):
         return True
     for entry in entries:
+        if len(entry) > 1 and entry[1] == "4":
+            continue
         for item in entry[2:]:
             fields = item.split(";")
             if len(fields) > 2 and "," in fields[2]:
