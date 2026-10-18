@@ -63,7 +63,7 @@ def test_on_mi_notifies_boundary() -> None:
     assert len(events) == 1
     event = events[0]
     assert isinstance(event, MowerMapInfoEvent)
-    assert event.boundary[0] == (-31000, 1800)
+    assert event.boundaries[0][0] == (-31000, 1800)
     assert event.zones is None and event.corridors is None
 
 
@@ -76,7 +76,7 @@ def test_on_ari_multipart_notifies_map_info_and_obstacles() -> None:
     assert len(events) == 2
     map_info = next(e for e in events if isinstance(e, MowerMapInfoEvent))
     obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
-    assert map_info.boundary is not None and len(map_info.zones) == 5
+    assert map_info.boundaries is not None and len(map_info.zones) == 5
     assert len(obstacles.obstacles) == 15
 
 
@@ -175,7 +175,7 @@ def test_on_mi_v117_notifies_boundary() -> None:
     events = _notified(OnMI, "on_mi_full_v117")
     assert len(events) == 1
     assert isinstance(events[0], MowerMapInfoEvent)
-    assert events[0].boundary[0] == (-10800, 7900)
+    assert events[0].boundaries[0][0] == (-10800, 7900)
 
 
 def test_on_mi_v117_idle_notifies_nothing() -> None:
@@ -188,7 +188,7 @@ def test_on_ari_v117_notifies_zones_obstacles_and_nogo() -> None:
     obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
     nogo = next(e for e in events if isinstance(e, MowerNoGoZonesEvent))
     assert len(map_info.zones) == 4
-    assert map_info.boundary is None  # 1.17 sends the outline via onMI
+    assert map_info.boundaries is None  # 1.17 sends it via onMI
     assert len(obstacles.obstacles) == 29
     # No onSpecialContour on 1.17: the no-go zones ride in onArI instead.
     assert len(nogo.zones) == 4
@@ -231,8 +231,8 @@ def test_on_map_info_publishes_the_captured_boundary() -> None:
     events = _notified(OnMapInfo, "on_map_info_v2_g1800")
     assert len(events) == 1
     assert isinstance(events[0], MowerMapInfoEvent)
-    assert events[0].boundary[0] == (-11918, 1959)
-    assert len(events[0].boundary) == 692
+    assert events[0].boundaries[0][0] == (-11918, 1959)
+    assert len(events[0].boundaries[0]) == 692
     assert events[0].zones is None and events[0].corridors is None
 
 
@@ -307,7 +307,7 @@ def test_on_map_info_does_not_inherit_the_outline_version_filter() -> None:
         if isinstance(call.args[0], MowerMapInfoEvent)
     ]
     assert len(events) == 1
-    assert events[0].boundary[0] == (-11918, 1959)
+    assert events[0].boundaries[0][0] == (-11918, 1959)
 
 
 def test_on_map_trace_notifies_the_live_runs_of_a_job() -> None:

@@ -123,9 +123,14 @@ class FragmentBuffer:
 
 @dataclass(frozen=True)
 class MapInfo:
-    """Static map geometry. None means "no update", never "empty"."""
+    """Static map geometry. None means "no update", never "empty".
 
-    boundary: Polygon | None = None
+    ``boundaries`` holds one lawn outline per mowed area. Every dialect
+    reports exactly one, except a chain-dialect ``onArI`` from a mower
+    whose map has more than one area.
+    """
+
+    boundaries: list[Polygon] | None = None
     zones: list[Polygon] | None = None
     corridors: list[Polygon] | None = None
 
@@ -192,7 +197,7 @@ def parse_map_info(blob: bytes) -> MapInfo:
         elif "," in fields[1]:
             # 1.36: an id where "s1" used to be, points from there on.
             boundary = _points(entry[1])
-    return MapInfo(boundary=boundary)
+    return MapInfo(boundaries=[boundary] if boundary else None)
 
 
 def _polygons(items: list[str]) -> list[Polygon]:
@@ -327,16 +332,19 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
             )
         zones = _polygons(sections.get("1", []) + sections.get("2", []))
 
-    boundary: Polygon | None = None
+    boundaries: list[Polygon] | None = None
     if "5" in sections:
-        boundary_polygons = _polygons(sections["5"])
-        boundary = boundary_polygons[0] if boundary_polygons else None
+        # An empty section 5 means "no update", not "no lawn": a heartbeat
+        # that carried no geometry must never wipe a stored outline.
+        boundaries = _polygons(sections["5"]) or None
 
     corridors = _polygons(sections["6"]) if "6" in sections else None
     obstacles = _polygons(sections["3"]) if "3" in sections else None
 
     return AreaInfo(
-        map_info=MapInfo(boundary=boundary, zones=zones, corridors=corridors),
+        map_info=MapInfo(
+            boundaries=boundaries, zones=zones, corridors=corridors
+        ),
         obstacles=obstacles,
     )
 

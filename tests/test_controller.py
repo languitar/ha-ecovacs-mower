@@ -677,7 +677,7 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     device.device_info = {"did": "did-1"}
 
     stored = {
-        "boundary": [[0, 0], [100, 0], [100, 100]],
+        "boundaries": [[[0, 0], [100, 0], [100, 100]]],
         "zones": [],
         "corridors": [],
         "obstacles": [],
@@ -691,7 +691,7 @@ async def test_setup_map_restores_persisted_geometry() -> None:
         await controller._setup_map(device)
 
     mower_map = controller.maps["did-1"]
-    assert mower_map.boundary == [(0, 0), (100, 0), (100, 100)]
+    assert mower_map.boundaries == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
     # Eager subscriptions: 5 map events + PositionsEvent. EventBus.notify
     # drops events nobody subscribes to, so waiting for the entity to

@@ -164,22 +164,24 @@ def _blob(key: str) -> bytes:
 
 def test_parse_map_info_extracts_boundary() -> None:
     info = parse_map_info(_blob("on_mi_full"))
-    assert info.boundary is not None
-    assert info.boundary[0] == (-31000, 1800)
-    assert len(info.boundary) == 2415
+    assert info.boundaries is not None
+    (boundary,) = info.boundaries
+    assert boundary[0] == (-31000, 1800)
+    assert len(boundary) == 2415
     assert info.zones is None and info.corridors is None
 
 
 def test_parse_map_info_idle_carries_nothing() -> None:
     info = parse_map_info(_blob("on_mi_idle"))
-    assert info.boundary is None
+    assert info.boundaries is None
     assert info.zones is None and info.corridors is None
 
 
 def test_parse_area_info_full_snapshot() -> None:
     area = parse_area_info(_blob("on_ari_multipart"))
-    assert area.map_info.boundary is not None
-    assert area.map_info.boundary[0] == (-31000, 1800)
+    assert area.map_info.boundaries is not None
+    (boundary,) = area.map_info.boundaries
+    assert boundary[0] == (-31000, 1800)
     assert len(area.map_info.zones) == 5  # sections 1 + 2
     assert len(area.map_info.corridors) == 3  # section 6
     assert len(area.obstacles) == 15  # section 3, ids 100-114
@@ -187,7 +189,7 @@ def test_parse_area_info_full_snapshot() -> None:
 
 def test_parse_area_info_zero_sections_mean_no_update() -> None:
     area = parse_area_info(_blob("on_ari_obstacles_only"))
-    assert area.map_info.boundary is None
+    assert area.map_info.boundaries is None
     assert area.map_info.zones is None
     assert area.map_info.corridors is None
     assert len(area.obstacles) == 14
@@ -247,9 +249,10 @@ def test_parse_special_contour() -> None:
 
 def test_parse_map_info_v117_reads_the_point_list_boundary() -> None:
     info = parse_map_info(_blob("on_mi_full_v117"))
-    assert info.boundary is not None
-    assert info.boundary[0] == (-10800, 7900)
-    assert len(info.boundary) == 1117
+    assert info.boundaries is not None
+    (boundary,) = info.boundaries
+    assert boundary[0] == (-10800, 7900)
+    assert len(boundary) == 1117
     assert info.zones is None and info.corridors is None
 
 
@@ -257,7 +260,7 @@ def test_parse_map_info_v117_idle_carries_nothing() -> None:
     # The idle snapshot is a bare ["1","1"]. The 1.13 parser indexed past
     # the end of it, so the blob was dropped as undecodable (#41).
     info = parse_map_info(_blob("on_mi_idle_v117"))
-    assert info.boundary is None
+    assert info.boundaries is None
     assert info.zones is None and info.corridors is None
 
 
@@ -281,14 +284,15 @@ def test_parse_map_info_reads_the_firmware_136_boundary() -> None:
     # dialect. Keyed on "s1" alone, the parser walked past this blob and
     # returned no boundary — 32 KB of lawn claimed and dropped (#81).
     info = parse_map_info(_blob("on_map_info_v2_g1800"))
-    assert info.boundary is not None
-    assert info.boundary[0] == (-11918, 1959)
-    assert len(info.boundary) == 692
+    assert info.boundaries is not None
+    (boundary,) = info.boundaries
+    assert boundary[0] == (-11918, 1959)
+    assert len(boundary) == 692
     assert info.zones is None and info.corridors is None
     # Same closure rule as every other dialect: within one grid step.
-    end_x, end_y = info.boundary[-1]
-    assert abs(end_x - info.boundary[0][0]) <= STEP_MM
-    assert abs(end_y - info.boundary[0][1]) <= STEP_MM
+    end_x, end_y = boundary[-1]
+    assert abs(end_x - boundary[0][0]) <= STEP_MM
+    assert abs(end_y - boundary[0][1]) <= STEP_MM
 
 
 def test_parse_map_info_drops_the_firmware_136_point_flag() -> None:
@@ -297,7 +301,7 @@ def test_parse_map_info_drops_the_firmware_136_point_flag() -> None:
     # third field has to be dropped rather than merely ignored downstream.
     blob = _blob("on_map_info_v2_g1800")
     assert b";-11918,1959,1;" in blob
-    boundary = parse_map_info(blob).boundary
+    (boundary,) = parse_map_info(blob).boundaries
     assert all(len(point) == 2 for point in boundary)
 
 
@@ -336,7 +340,7 @@ def test_parse_area_info_v117_zones_obstacles_and_empty_nogo() -> None:
     # Section 2 with no items at all: this lawn has no no-go zones.
     assert area.nogo == []
     # 1.17 has no boundary or corridor section; onMI carries the outline.
-    assert area.map_info.boundary is None
+    assert area.map_info.boundaries is None
     assert area.map_info.corridors is None
 
 
@@ -394,8 +398,8 @@ def test_parse_area_info_v113_section_4_point_list_is_not_the_v117_dialect() -> 
         ]
     ).encode()
     area = parse_area_info(blob)
-    assert area.map_info.boundary is not None
-    assert len(area.map_info.boundary) > 1
+    assert area.map_info.boundaries is not None
+    assert len(area.map_info.boundaries[0]) > 1
     assert len(area.obstacles) == 1
     assert len(area.obstacles[0]) > 1
 
