@@ -59,6 +59,7 @@ class MowerMapInfoEvent(Event):
     boundaries: list[Polygon] | None
     zones: list[Polygon] | None
     flush_edges: list[Polygon] | None
+    corridors: list[Polygon] | None = None
 
 
 @dataclass(frozen=True)
@@ -166,11 +167,14 @@ class OnMI(_MapMessage):
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         map_info = parse_map_info(blob)
-        if map_info.boundaries is None:
+        if map_info.boundaries is None and map_info.corridors is None:
             return HandlingResult.success()  # idle snapshot, nothing new
         event_bus.notify(
             MowerMapInfoEvent(
-                boundaries=map_info.boundaries, zones=None, flush_edges=None
+                boundaries=map_info.boundaries,
+                zones=None,
+                flush_edges=None,
+                corridors=map_info.corridors,
             )
         )
         return HandlingResult.success()

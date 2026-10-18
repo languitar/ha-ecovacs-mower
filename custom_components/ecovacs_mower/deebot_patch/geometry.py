@@ -125,6 +125,10 @@ class FragmentBuffer:
 class MapInfo:
     """Static map geometry. None means "no update", never "empty".
 
+    ``corridors`` are the passages joining two mowed areas, which arrive
+    on onMI rather than onArI; ``flush_edges`` are arcs of one area's own
+    outline. The two were one field until the passages turned up.
+
     ``boundaries`` holds one lawn outline per mowed area. Every dialect
     reports exactly one, except a chain-dialect ``onArI`` from a mower
     whose map has more than one area.
@@ -133,6 +137,7 @@ class MapInfo:
     boundaries: list[Polygon] | None = None
     zones: list[Polygon] | None = None
     flush_edges: list[Polygon] | None = None
+    corridors: list[Polygon] | None = None
 
 
 @dataclass(frozen=True)
@@ -190,8 +195,14 @@ def parse_map_info(blob: bytes) -> MapInfo:
     a new claim rather than a decode. The fixture carries all five.
     """
     boundaries: list[Polygon] = []
+    corridors: list[Polygon] = []
     for entry in json.loads(blob):
-        if entry[0] != "1" or len(entry) < 2:
+        if len(entry) < 2:
+            continue
+        if entry[0] == "2":
+            corridors.extend(_corridors(entry[1:]))
+            continue
+        if entry[0] != "1":
             continue
         for element in entry[1:]:
             fields = element.split(";")
@@ -210,7 +221,33 @@ def parse_map_info(blob: bytes) -> MapInfo:
                 continue
             if outline:
                 boundaries.append(outline)
-    return MapInfo(boundaries=boundaries or None)
+    return MapInfo(
+        boundaries=boundaries or None, corridors=corridors or None
+    )
+
+
+def _corridors(elements: list[str]) -> list[Polygon]:
+    """Decode onMI record 2: ``<id>,<from>,<to>;<x,y>;<chain code>`` each.
+
+    A three-lawn GOAT O800 RTK (``9bts2s``, fw 1.13.8) sends ``1,1,2``
+    and ``2,2,3`` there, 11 and 79 points long, and the two ids in each
+    header are exactly the areas whose outlines the ends touch — 0 mm
+    from both (issue #41). Record 2 was documented as a bare marker,
+    which is all a single-area map puts in it.
+
+    The header is also what tells a corridor from everything else a
+    record 2 has held: it carries commas, where every other dialect leads
+    with a plain id — firmware 1.36's retrace of the outline (``129``) and
+    its islands (``100``…) included, which must not be read as passages.
+    """
+    corridors: list[Polygon] = []
+    for element in elements:
+        fields = element.split(";")
+        if len(fields) < 3 or "," not in fields[0]:
+            continue
+        if points := chain_to_points(";".join(fields[1:])):
+            corridors.append(points)
+    return corridors
 
 
 def _polygons(items: list[str]) -> list[Polygon]:

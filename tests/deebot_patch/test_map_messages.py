@@ -76,6 +76,17 @@ def test_on_mi_notifies_boundary() -> None:
     assert event.zones is None and event.flush_edges is None
 
 
+def test_on_mi_notifies_every_outline_and_the_corridors() -> None:
+    events = _notified(OnMI, "on_mi_multi_area")
+    assert len(events) == 1
+    assert [len(outline) for outline in events[0].boundaries] == [
+        2420,
+        1222,
+        499,
+    ]
+    assert [len(corridor) for corridor in events[0].corridors] == [11, 79]
+
+
 def test_on_mi_idle_notifies_nothing() -> None:
     assert _notified(OnMI, "on_mi_idle") == []
 

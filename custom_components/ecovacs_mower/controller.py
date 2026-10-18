@@ -297,7 +297,10 @@ class EcovacsController:
 
         async def on_map_info(event: MowerMapInfoEvent) -> None:
             mower_map.update_map_info(
-                event.boundaries, event.zones, event.flush_edges
+                event.boundaries,
+                event.zones,
+                event.flush_edges,
+                event.corridors,
             )
             save()
 

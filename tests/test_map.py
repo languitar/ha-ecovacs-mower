@@ -50,7 +50,9 @@ def test_track_thins_the_old_half_when_full() -> None:
 
 def test_round_trip_through_dict() -> None:
     mower_map = MowerMap()
-    mower_map.update_map_info([BOUNDARY], [[(1, 2), (3, 4)]], [])
+    mower_map.update_map_info(
+        [BOUNDARY], [[(1, 2), (3, 4)]], [], [[(9, 9), (9, 19)]]
+    )
     mower_map.update_obstacles([[(5, 6)]])
     mower_map.update_nogo([[(7, 8)]])
     mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
@@ -64,6 +66,7 @@ def test_round_trip_through_dict() -> None:
 
     assert restored.boundaries == [BOUNDARY]
     assert restored.zones == [[(1, 2), (3, 4)]]
+    assert restored.corridors == [[(9, 9), (9, 19)]]
     assert restored.obstacles == [[(5, 6)]]
     assert restored.nogo_zones == [[(7, 8)]]
     assert restored.lanes == {("1", 5): [((0, 0), (0, 100))]}
@@ -85,6 +88,8 @@ def test_a_legacy_snapshot_s_corridors_are_the_flush_edges() -> None:
     # upgrade.
     restored = MowerMap.from_dict({"corridors": [[[0, 0], [10, 0]]]})
     assert restored.flush_edges == [[(0, 0), (10, 0)]]
+    # And nothing lands in the passages, which that snapshot never held.
+    assert restored.corridors == []
 
 
 def test_is_empty() -> None:

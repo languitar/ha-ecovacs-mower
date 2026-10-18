@@ -40,6 +40,20 @@ def test_flush_edges_are_drawn_open_and_the_lawn_closed() -> None:
     assert lawn is not None and lawn.group(1).endswith("Z")
 
 
+def test_corridors_are_drawn_as_open_paths() -> None:
+    # A corridor runs from one lawn to the next, so it is a path like the
+    # flush edges and not a ring like the outline.
+    mower_map = MowerMap()
+    mower_map.update_map_info(
+        [BOUNDARY], None, None, [[(0, 0), (1000, 0), (1500, 800)]]
+    )
+    svg = render(mower_map)
+
+    corridor = re.search(r'class="corridor" d="([^"]+)"', svg)
+    assert corridor is not None
+    assert not corridor.group(1).endswith("Z")
+
+
 def test_empty_map_renders_placeholder() -> None:
     svg = render(MowerMap())
     assert svg.startswith("<svg")

@@ -185,6 +185,28 @@ def test_parse_map_info_reads_one_outline_per_area() -> None:
     ]
 
 
+def test_parse_map_info_reads_the_corridors_between_areas() -> None:
+    # Record 2 of the same three-lawn O800 RTK holds the passages:
+    # "1,1,2;850,2200;…" and "2,2,3;7750,18450;…", whose header ids are
+    # the two areas each one joins. Record 2 was documented as the bare
+    # marker a single-area map puts there, so they were never read.
+    info = parse_map_info(_blob("on_mi_multi_area"))
+    assert [len(corridor) for corridor in info.corridors] == [11, 79]
+    assert [corridor[0] for corridor in info.corridors] == [
+        (850, 2200),
+        (7750, 18450),
+    ]
+
+
+def test_parse_map_info_v2_record_2_is_not_a_corridor() -> None:
+    # Firmware 1.36 puts the outline retraced at the grid step in record
+    # 2 ("129;…") and the islands in record 3. Neither leads with the
+    # comma-separated header a corridor has, so neither is read as one.
+    info = parse_map_info(_blob("on_map_info_v2_g1800"))
+    assert info.corridors is None
+    assert len(info.boundaries) == 1
+
+
 def test_parse_map_info_idle_carries_nothing() -> None:
     info = parse_map_info(_blob("on_mi_idle"))
     assert info.boundaries is None
