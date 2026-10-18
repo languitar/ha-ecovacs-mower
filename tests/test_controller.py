@@ -679,7 +679,7 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     stored = {
         "boundaries": [[[0, 0], [100, 0], [100, 100]]],
         "zones": [],
-        "corridors": [],
+        "flush_edges": [],
         "obstacles": [],
         "nogo_zones": [],
         "lanes": [["1", 5, [[[0, 0], [0, 100]]]]],

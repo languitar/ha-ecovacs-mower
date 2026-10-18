@@ -23,7 +23,7 @@ class MowerMap:
         # lawn, every other mower exactly one.
         self.boundaries: list[Polygon] = []
         self.zones: list[Polygon] = []
-        self.corridors: list[Polygon] = []
+        self.flush_edges: list[Polygon] = []
         self.obstacles: list[Polygon] = []
         self.nogo_zones: list[Polygon] = []
         self.lanes: dict[tuple[str, int], list[Segment]] = {}
@@ -54,22 +54,22 @@ class MowerMap:
             and not self.covered
             and not self.nogo_zones
             and not self.obstacles
-            and not self.corridors
+            and not self.flush_edges
         )
 
     def update_map_info(
         self,
         boundaries: list[Polygon] | None,
         zones: list[Polygon] | None,
-        corridors: list[Polygon] | None,
+        flush_edges: list[Polygon] | None,
     ) -> None:
         """Merge static geometry; None means "unchanged"."""
         if boundaries is not None:
             self.boundaries = boundaries
         if zones is not None:
             self.zones = zones
-        if corridors is not None:
-            self.corridors = corridors
+        if flush_edges is not None:
+            self.flush_edges = flush_edges
 
     def update_obstacles(self, obstacles: list[Polygon]) -> None:
         """Replace the obstacle set (events carry the complete set)."""
@@ -124,7 +124,7 @@ class MowerMap:
         return {
             "boundaries": self.boundaries,
             "zones": self.zones,
-            "corridors": self.corridors,
+            "flush_edges": self.flush_edges,
             "obstacles": self.obstacles,
             "nogo_zones": self.nogo_zones,
             "lanes": [
@@ -155,7 +155,13 @@ class MowerMap:
             # nothing but wrapping.
             mower_map.boundaries = [polygon(data["boundary"])]
         mower_map.zones = [polygon(p) for p in data.get("zones", [])]
-        mower_map.corridors = [polygon(p) for p in data.get("corridors", [])]
+        # "corridors" is what section 6 was called before it was named
+        # for the flush-mow edges it holds, and is what older snapshots
+        # store it under.
+        mower_map.flush_edges = [
+            polygon(p)
+            for p in data.get("flush_edges", data.get("corridors", []))
+        ]
         mower_map.obstacles = [polygon(p) for p in data.get("obstacles", [])]
         mower_map.nogo_zones = [
             polygon(p) for p in data.get("nogo_zones", [])

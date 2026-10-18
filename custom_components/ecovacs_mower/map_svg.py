@@ -21,7 +21,7 @@ _LAWN_FILL = "#2e5d34"
 _LAWN_EDGE = "#7fd68a"
 _LANE = "#4a8f52"
 _ZONE = "#c9a94e"
-_CORRIDOR = "#5aa0c8"
+_FLUSH_EDGE = "#5aa0c8"
 _NOGO_FILL = "#8f3a3a"
 _NOGO_EDGE = "#e07a7a"
 _OBSTACLE = "#c86a2e"
@@ -47,7 +47,7 @@ def render(mower_map: MowerMap) -> str:
     for polygon in (
         mower_map.boundaries
         + mower_map.zones
-        + mower_map.corridors
+        + mower_map.flush_edges
         + mower_map.obstacles
         + mower_map.nogo_zones
         + mower_map.covered
@@ -110,12 +110,12 @@ def render(mower_map: MowerMap) -> str:
             f'<path class="zone" d="{path(polygon)}" fill="none" '
             f'stroke="{_ZONE}" stroke-width="1" stroke-dasharray="4 3"/>'
         )
-    for polygon in mower_map.corridors:
+    for polygon in mower_map.flush_edges:
         # Open: these are arcs of the lawn outline, marking where the
         # mower is told to mow flush against the edge — not rings.
         parts.append(
-            f'<path class="corridor" d="{path(polygon, close=False)}" '
-            f'fill="none" stroke="{_CORRIDOR}" stroke-width="1"/>'
+            f'<path class="flush-edge" d="{path(polygon, close=False)}" '
+            f'fill="none" stroke="{_FLUSH_EDGE}" stroke-width="1"/>'
         )
     for polygon in mower_map.nogo_zones:
         parts.append(

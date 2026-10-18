@@ -10,7 +10,7 @@ BOUNDARY = [(0, 0), (1000, 0), (1000, 1000), (0, 1000)]
 def test_none_fields_leave_previous_values_untouched() -> None:
     mower_map = MowerMap()
     mower_map.update_map_info([BOUNDARY], [[(1, 1)]], None)
-    # An idle heartbeat: boundary only, zones/corridors None.
+    # An idle heartbeat: boundary only, zones/flush_edges None.
     mower_map.update_map_info(None, None, None)
     assert mower_map.boundaries == [BOUNDARY]
     assert mower_map.zones == [[(1, 1)]]
@@ -79,6 +79,14 @@ def test_a_legacy_snapshot_s_one_outline_is_wrapped() -> None:
     assert restored.boundaries == [[(0, 0), (10, 0), (10, 10)]]
 
 
+def test_a_legacy_snapshot_s_corridors_are_the_flush_edges() -> None:
+    # Section 6 was stored under "corridors" before it was named for the
+    # flush-mow edges it holds, and that is what is on disk after an
+    # upgrade.
+    restored = MowerMap.from_dict({"corridors": [[[0, 0], [10, 0]]]})
+    assert restored.flush_edges == [[(0, 0), (10, 0)]]
+
+
 def test_is_empty() -> None:
     mower_map = MowerMap()
     assert mower_map.is_empty
@@ -102,7 +110,8 @@ def test_is_empty_false_for_obstacles_only() -> None:
     assert not mower_map.is_empty
 
 
-def test_is_empty_false_for_corridors_only() -> None:
+def test_is_empty_false_for_flush_edges_only() -> None:
+    # Section 6 alone is still a map worth drawing.
     mower_map = MowerMap()
     mower_map.update_map_info(None, None, [[(0, 0)]])
     assert not mower_map.is_empty

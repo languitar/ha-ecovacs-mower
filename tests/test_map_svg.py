@@ -22,7 +22,7 @@ def _populated_map() -> MowerMap:
     return mower_map
 
 
-def test_corridors_are_drawn_open_and_the_lawn_closed() -> None:
+def test_flush_edges_are_drawn_open_and_the_lawn_closed() -> None:
     # Section 6 is an arc of the lawn outline, not a ring: on a real
     # three-lawn map its ends sit 5 to 11 metres apart, where every ring —
     # outline, no-go zone, obstacle — closes within one 50 mm grid step.
@@ -33,9 +33,9 @@ def test_corridors_are_drawn_open_and_the_lawn_closed() -> None:
     )
     svg = render(mower_map)
 
-    corridor = re.search(r'class="corridor" d="([^"]+)"', svg)
-    assert corridor is not None
-    assert not corridor.group(1).endswith("Z")
+    edge = re.search(r'class="flush-edge" d="([^"]+)"', svg)
+    assert edge is not None
+    assert not edge.group(1).endswith("Z")
     lawn = re.search(r'class="boundary" d="([^"]+)"', svg)
     assert lawn is not None and lawn.group(1).endswith("Z")
 

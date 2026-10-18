@@ -132,7 +132,7 @@ class MapInfo:
 
     boundaries: list[Polygon] | None = None
     zones: list[Polygon] | None = None
-    corridors: list[Polygon] | None = None
+    flush_edges: list[Polygon] | None = None
 
 
 @dataclass(frozen=True)
@@ -286,8 +286,9 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
     as "no update" too rather than risk wiping the lawn on an unconfirmed
     shape.
 
-    Neither the lawn outline nor corridors have a section here: onMI
-    still carries the outline, and no capture has shown corridors.
+    Neither the lawn outline nor the flush-mow edges have a section
+    here: onMI still carries the outline, and no 1.17 capture has shown
+    anything in section 6.
     """
     sections: dict[str, list[Polygon]] = {}
     for entry in entries:
@@ -319,7 +320,7 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
 
 
 def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
-    """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
+    """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 outlines, 6 edges.
 
     Entry format: ``["<area>", "<section>", "<flag>", *items]`` where flag
     "0" means "no update" for that section — represented as None so stored
@@ -335,13 +336,14 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
     before it and only the last area survived — for the outline that meant
     two thirds of the map silently disappeared.
 
-    Section 6 is named after a guess, and the name is wrong. On that
-    mower all 230, 106 and 186 points of its three records lie exactly on
-    the outline of area 1, and its owner drew them in the app to say where
-    the mower should mow flush against the lawn edge. They are arcs of the
-    boundary, not passages between lawns, which is why they are the one
-    layer the renderer must leave open. The field keeps the name for now:
-    changing it reaches the event, the store and the renderer.
+    Section 6 holds the stretches of edge the mower is told to mow flush
+    against. On that mower all 230, 106 and 186 points of its three
+    records lie exactly on the outline of area 1 — every one — and its
+    owner drew those stretches in the app for that purpose. They are arcs
+    of the boundary, which is why the renderer leaves them open. It was
+    called "corridors" here until then, from a guess made when no capture
+    had anything in the section; the passages between lawns are a
+    different thing and arrive on onMI.
 
     An area's items are therefore accumulated into their section instead of
     replacing it. One consequence is worth naming: a section is published
@@ -376,12 +378,12 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
         # that carried no geometry must never wipe a stored outline.
         boundaries = _polygons(sections["5"]) or None
 
-    corridors = _polygons(sections["6"]) if "6" in sections else None
+    flush_edges = _polygons(sections["6"]) if "6" in sections else None
     obstacles = _polygons(sections["3"]) if "3" in sections else None
 
     return AreaInfo(
         map_info=MapInfo(
-            boundaries=boundaries, zones=zones, corridors=corridors
+            boundaries=boundaries, zones=zones, flush_edges=flush_edges
         ),
         obstacles=obstacles,
         nogo=nogo,

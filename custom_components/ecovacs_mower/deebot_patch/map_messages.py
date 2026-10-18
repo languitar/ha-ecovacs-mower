@@ -58,7 +58,7 @@ class MowerMapInfoEvent(Event):
 
     boundaries: list[Polygon] | None
     zones: list[Polygon] | None
-    corridors: list[Polygon] | None
+    flush_edges: list[Polygon] | None
 
 
 @dataclass(frozen=True)
@@ -170,7 +170,7 @@ class OnMI(_MapMessage):
             return HandlingResult.success()  # idle snapshot, nothing new
         event_bus.notify(
             MowerMapInfoEvent(
-                boundaries=map_info.boundaries, zones=None, corridors=None
+                boundaries=map_info.boundaries, zones=None, flush_edges=None
             )
         )
         return HandlingResult.success()
@@ -218,8 +218,8 @@ class OnMapInfo(OnMI):
 
 
 class OnArI(_MapMessage):
-    """Area info: zones, obstacles, boundary, corridors — plus no-go zones
-    from firmware 1.17 on.
+    """Area info: zones, obstacles, outlines, flush-mow edges — plus
+    no-go zones from firmware 1.17 on.
     """
 
     NAME = "onArI"
@@ -231,13 +231,13 @@ class OnArI(_MapMessage):
         if (
             map_info.boundaries is not None
             or map_info.zones is not None
-            or map_info.corridors is not None
+            or map_info.flush_edges is not None
         ):
             event_bus.notify(
                 MowerMapInfoEvent(
                     boundaries=map_info.boundaries,
                     zones=map_info.zones,
-                    corridors=map_info.corridors,
+                    flush_edges=map_info.flush_edges,
                 )
             )
         if area.obstacles is not None:
