@@ -171,6 +171,20 @@ def test_parse_map_info_extracts_boundary() -> None:
     assert info.zones is None and info.corridors is None
 
 
+def test_parse_map_info_reads_one_outline_per_area() -> None:
+    # Record 1 of a three-lawn O800 RTK (9bts2s, fw 1.13.8) holds three
+    # elements: "s1;1;…" for the first area and "2;1;…", "3;1;…" for the
+    # rest. Only the s1 one used to be read, so an onMI landing after an
+    # onArI replaced the whole stored set with a single lawn.
+    info = parse_map_info(_blob("on_mi_multi_area"))
+    assert [len(outline) for outline in info.boundaries] == [2420, 1222, 499]
+    assert [outline[0] for outline in info.boundaries] == [
+        (-25100, 6750),
+        (850, 2200),
+        (3000, 18900),
+    ]
+
+
 def test_parse_map_info_idle_carries_nothing() -> None:
     info = parse_map_info(_blob("on_mi_idle"))
     assert info.boundaries is None

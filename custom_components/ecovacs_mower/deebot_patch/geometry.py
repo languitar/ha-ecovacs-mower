@@ -172,6 +172,14 @@ def parse_map_info(blob: bytes) -> MapInfo:
     The first two have an idle variant carrying no geometry — ``s1;0;``
     and a bare ``1`` respectively — which yields all-None.
 
+    Record 1 holds **one element per mowed area**, not one outline: the
+    first is marked ``s1`` and the rest lead with the area's own id,
+    otherwise identically shaped. A three-lawn GOAT O800 RTK (``9bts2s``,
+    fw 1.13.8) sends ``s1;1;…``, ``2;1;…`` and ``3;1;…`` in it — 2420,
+    1222 and 499 points (issue #41). Reading only the ``s1`` element
+    dropped the other lawns here, and since the event replaces the stored
+    set, an onMI arriving after an onArI took the map back down to one.
+
     1.36 drops the ``s1`` marker for a record id, appends a per-point
     flag, and adds sections. Only section 1 is read here. Section 2 is
     the same outline retraced at the 50 mm grid step — 1924 points to
@@ -181,23 +189,28 @@ def parse_map_info(blob: bytes) -> MapInfo:
     is the boundary in every dialect, so publishing more than it would be
     a new claim rather than a decode. The fixture carries all five.
     """
-    boundary: Polygon | None = None
+    boundaries: list[Polygon] = []
     for entry in json.loads(blob):
         if entry[0] != "1" or len(entry) < 2:
             continue
-        fields = entry[1].split(";")
-        if len(fields) < 2:
-            # 1.17's idle marker: the record is the bare id, no geometry.
-            continue
-        if fields[0] == "s1":
-            if "," in fields[1]:
-                boundary = _points(entry[1])
-            elif fields[1] == "1":
-                boundary = chain_to_points(";".join(fields[2:]))
-        elif "," in fields[1]:
-            # 1.36: an id where "s1" used to be, points from there on.
-            boundary = _points(entry[1])
-    return MapInfo(boundaries=[boundary] if boundary else None)
+        for element in entry[1:]:
+            fields = element.split(";")
+            if len(fields) < 2:
+                # 1.17's idle marker: the record is the bare id.
+                continue
+            if fields[1] == "1":
+                # 1.13: "<id>;1;<x,y>;<chain code>", where the first
+                # area's id is the marker "s1".
+                outline = chain_to_points(";".join(fields[2:]))
+            elif "," in fields[1]:
+                # 1.17 and 1.36: points from the second field on, under
+                # "s1" and under an id respectively.
+                outline = _points(element)
+            else:
+                continue
+            if outline:
+                boundaries.append(outline)
+    return MapInfo(boundaries=boundaries or None)
 
 
 def _polygons(items: list[str]) -> list[Polygon]:

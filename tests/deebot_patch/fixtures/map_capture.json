@@ -1,4 +1,54 @@
 {
+ "on_mi_multi_area": [
+  {
+   "message": "onMI",
+   "payload": {
+    "header": {
+     "tzm": 120,
+     "ts": "0",
+     "fwVer": "1.13.8"
+    },
+    "body": {
+     "data": {
+      "mid": "1",
+      "centerX": -4850,
+      "centerY": 9550,
+      "batid": "aidmdd",
+      "serial": "2",
+      "index": "0",
+      "using": 1,
+      "type": "0",
+      "info": "XQAABACWCwAAAC2WwEIAXhHYeUGwXMf/aYW2aBtoBNH5M6yJwhpBUVtGGwf8tZiUwoVifQTn5qX7T/oMMVpr8AIns9BKrLHP1E9iqqFkRCZmRaIM2PMRWyLOiBQWU959/oB0IVZalqa+WB9XAFgZh6405dUZ9qrau/ORXaxy9LhUuk6hFROxWsHRi3ygoe+q1sf0R2dcTCSDV8MrYKEoFcmwjJq0J7D9I2a/x6VmaaO0cKKG53xLA6unif7TjYWWhPKHpKJ61iBJIF3j3YG5NxW2ohy+Dbl497NJMzZxP2hcXxLdGFCn8P6YnSG60WzHtMhnW48apkgTJx9CX5J98BYfN9frOguXbVKoe1vlhfPV4mdguRjrtAUtjJbaXkRiJ4+FT/ksqDh6mky7TLD9m32ODTQsb3iuAGogIYoSEr2n3Iv3TjTXe+GLTfFU4Y724rbsV0PcTwiVeeTwNDGsoB+TjuDKABIlDWCrY0aWhsbnpc9u55LaNIoGpszwurPuImow8c9ZHhf4qf+mc9SYqoBNQj68z1OS89nvR6wp745K6xlHTtkvVWG5W+2Xl0EDaYnZgaf8W6RBxL52CHH9VEA24aofvnQeCsjGm1fNcHrW6qOTzW7GDPqOVKLSsFw/RVOft3FwdSqB0Mb1ZXP7ME+ZLHmlNPXlJ9knaHE77hwtnXONfMNNm2peJaIrLIvLzYkIlfMtgMmXux5vPxh5HGaRDlKLFr9p1Z6jFIs9MbC8QXuTHtSTju6SLZXS3noavjrHiosI8Z43+HhI9lf9Q3O8tUAi5hDfuJ9X5hSdemLmIejbndPuwG2TzFgbMYDELCf6TDrDFpVTkd9pptrdYt5l4AmH31VUmw4IN3u8bB7igQ6cRHTfwxDWRUb4wGWBDcELi+sY8i7Mo/3HHSuNcmisQGZok9x3Ksr52gKDU532AZHPctiOy9F/gHshN0R//whYSQBQUNAr/miL43dy3+7+5qpr81hidSq+GITLPnY9vshgHWss21Xk2yKQ8y5U",
+      "infoSize": 2966
+     }
+    }
+   }
+  },
+  {
+   "message": "onMI",
+   "payload": {
+    "header": {
+     "tzm": 120,
+     "ts": "0",
+     "fwVer": "1.13.8"
+    },
+    "body": {
+     "data": {
+      "mid": "1",
+      "centerX": -4850,
+      "centerY": 9550,
+      "batid": "aidmdd",
+      "serial": "2",
+      "index": "1",
+      "using": 1,
+      "type": "0",
+      "info": "WQ7/n9j3zaeuDdTvzHIgsNt1qOb5tL1H3/kZjSzDWGooE1bBzJKx08XC3490dcoddrmgeXybinvafUXgeLBwtS3w+MQWn2T0gBgC3ci8h/xtlNXlM2mA0YK0bOPb7GLFdgwC0Yx+fAVddlUFyP/gFKP0xaGtq91ZplNT4x/3ozonXCWKAT/arBN7y8B25YQMqFYb3Phduc4oB1YGQE7fcHuwTHNsPBF2QyoiVySmFteapXfJO4GakF6/aXSTlmjR9wCQ5fv3nsO4Vg8kpfX8KdhRsVLQw084nKRSx/o4j+YE3qXahMUSyadrdGi0pQgCRLl7bF46+G8JECmaK8XCrv7IijmQV9vX",
+      "infoSize": 2966
+     }
+    }
+   }
+  }
+ ],
  "on_special_contour_no_polygon": [
   {
    "message": "onSpecialContour",
