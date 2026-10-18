@@ -42,7 +42,7 @@ from .geometry import (
     parse_map_track,
     parse_special_contour,
 )
-from .state_precedence import record_for
+from .state_precedence import profile_for_bus, record_for
 
 if TYPE_CHECKING:
     from deebot_client.event_bus import EventBus
@@ -225,14 +225,18 @@ class OnMapInfo(OnMI):
 
 class OnArI(_MapMessage):
     """Area info: zones, obstacles, outlines, flush-mow edges — plus
-    no-go zones from firmware 1.17 on.
+    no-go zones from firmware 1.17 on, and on a class whose profile says
+    its chain-dialect section 2 holds them.
     """
 
     NAME = "onArI"
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
-        area = parse_area_info(blob)
+        profile = profile_for_bus(event_bus)
+        area = parse_area_info(
+            blob, area_nogo=profile is not None and profile.area_nogo
+        )
         map_info = area.map_info
         if (
             map_info.boundaries is not None
@@ -249,8 +253,6 @@ class OnArI(_MapMessage):
         if area.obstacles is not None:
             event_bus.notify(MowerObstaclesEvent(obstacles=area.obstacles))
         if area.nogo is not None:
-            # 1.17 only: up to 1.13 the no-go zones come in their own
-            # onSpecialContour message and this stays None.
             event_bus.notify(MowerNoGoZonesEvent(zones=area.nogo))
         return HandlingResult.success()
 
@@ -289,6 +291,15 @@ class OnSpecialContour(_MapMessage):
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
+        # Two sources for one complete-set event, which would otherwise
+        # take turns overwriting each other. onArI wins where its section
+        # 2 is validated: it reports per area and traced, while this
+        # message has been seen carrying a single point for the very zone
+        # the same mower names in full on onArI (issue #41). Where it is
+        # not validated this is the source, and the only one.
+        profile = profile_for_bus(event_bus)
+        if profile is not None and profile.area_nogo:
+            return HandlingResult.success()
         zones = parse_special_contour(blob)
         if zones is None:
             return HandlingResult.analyse()  # nothing readable in it

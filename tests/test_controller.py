@@ -220,12 +220,22 @@ _SUPPORTED = (
 )
 
 
-async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> None:
+async def _initialize_with(
+    hass: object, device_classes: tuple[str, ...]
+) -> list[object]:
     """Run ``initialize()`` with the devices *device_classes* coming from the API.
 
     Everything outside the verification loop is mocked: get_devices, the MQTT
     client and Device. What is tested is which branch a class ends up in, not
     connectivity.
+
+    The device stand-ins are returned in the order they were built, so a
+    caller can reach the event bus the controller handed each one. Each
+    carries that device's real ``device_info`` dict: ``Device.device_info``
+    is the plain API dict rather than the ``DeviceInfo`` wrapper, and the
+    controller branches on the ``class`` it finds there — a bare mock
+    answers that lookup with another mock, which is in no mapping, so the
+    registration branch would never be taken.
     """
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -265,6 +275,14 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
             not_supported=[],
         )
 
+    made: list[object] = []
+
+    def make_device(info: DeviceInfo, _authenticator: object) -> object:
+        device = AsyncMock()
+        device.device_info = info.api
+        made.append(device)
+        return device
+
     controller = EcovacsController(
         hass,  # type: ignore[arg-type]
         {
@@ -283,7 +301,7 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
             patch.object(EcovacsController, "_get_mqtt_client", AsyncMock()),
             patch(
                 "custom_components.ecovacs_mower.controller.Device",
-                MagicMock(return_value=AsyncMock()),
+                MagicMock(side_effect=make_device),
             ),
         ):
             await controller.initialize()
@@ -292,6 +310,7 @@ async def _initialize_with(hass: object, device_classes: tuple[str, ...]) -> Non
         # initialize() seeds the cache globally; leave it as we found it.
         for class_ in (*_SUPPORTED, *device_classes):
             _DEVICES.pop(class_, None)
+    return made
 
 
 async def test_unsupported_mower_class_warns(hass, caplog) -> None:
@@ -330,6 +349,25 @@ async def test_vacuum_on_the_same_account_stays_quiet(hass, caplog) -> None:
 
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any(_VACUUM in r.getMessage() for r in caplog.records)
+
+
+async def test_the_profile_is_registered_with_the_devices_bus(hass) -> None:
+    """A message handler reads the flags off the bus, so they have to get there.
+
+    ``register_mower_bus`` is the only route: handlers are classmethods that
+    receive the bus and the payload and nothing else. Without this the
+    per-class readings — section 2's no-go zones, what onMapTrack means —
+    would silently fall back to "nothing validated" for every device.
+    """
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        profile_for_bus,
+    )
+
+    (device,) = await _initialize_with(hass, ("9bts2s",))
+
+    profile = profile_for_bus(device.events)
+    assert profile is not None and profile.device_class == "9bts2s"
+    assert profile.area_nogo is True
 
 
 async def test_supported_mowers_are_verified(hass, caplog) -> None:

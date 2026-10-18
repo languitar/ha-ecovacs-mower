@@ -64,16 +64,21 @@ class MowerProfile:
     service checks for. ``border_mowing`` gives it the ``mow_border`` button;
     that one gates an entity rather than a capability, because
     ``Capabilities`` has no field for a border job, and ``button.py`` reads it
-    from the profile. ``uwb_beacons`` makes ``getLifeSpan`` ask for every
-    component instead of naming the library's, because the class reports its
-    beacons only in the answer to that request. Without it, the request names
-    the library's components, because a class without beacons may answer the
-    empty list with the blades alone (issue #146).
+    from the profile. ``area_nogo`` reads section 2 of a chain-dialect
+    ``onArI`` as this class's no-go zones and lets it outrank
+    ``onSpecialContour``; without it the section joins the mowing zones,
+    which is what every class did before one of them was checked.
+    ``uwb_beacons`` makes ``getLifeSpan`` ask for every component instead of
+    naming the library's, because the class reports its beacons only in the
+    answer to that request. Without it, the request names the library's
+    components, because a class without beacons may answer the empty list
+    with the blades alone (issue #146).
     """
 
     device_class: str
     area_parameters: bool = False
     area_names: bool = False
+    area_nogo: bool = False
     zone_mowing: bool = False
     border_mowing: bool = False
     uwb_beacons: bool = False
@@ -149,6 +154,19 @@ class MowerProfile:
 #                     areas in the app:
 #                     [["1","1","Hinten","","-16900","13900","0-0"], …] —
 #                     ids, the new names, and a point inside each area.
+#   area_nogo       — 9bts2s: the three-area onArI captured on the O800 RTK,
+#                     firmware 1.13.8 (issue #41). Exactly one of its areas
+#                     carries a section-2 ring, and it is the area its owner
+#                     has a no-go zone in; the other two have none. The same
+#                     mower's onSpecialContour carries a single point for
+#                     that zone, so section 2 is also the only traced
+#                     version of it there is. Off everywhere else: on the
+#                     O1200 LiDAR Pro's capture (2i0fns, firmware 1.11.31)
+#                     section 2 holds two rings where onSpecialContour
+#                     reports two rectangles, one of which section 2 does
+#                     not mention at all, so what the section means there is
+#                     an open question (PR #136 review) and that mower keeps
+#                     reading its zones from onSpecialContour.
 #   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
 #                     77atlz: two zone runs on the G1-800, firmware 1.36.208,
@@ -199,7 +217,9 @@ class MowerProfile:
 #                     trimmerBrush to it (issue #146).
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
-    "9bts2s": MowerProfile("9bts2s", area_names=True, zone_mowing=True),
+    "9bts2s": MowerProfile(
+        "9bts2s", area_names=True, area_nogo=True, zone_mowing=True
+    ),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile(
         "77atlz", zone_mowing=True, border_mowing=True, uwb_beacons=True

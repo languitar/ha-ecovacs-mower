@@ -146,8 +146,9 @@ class AreaInfo:
 
     map_info: MapInfo
     obstacles: list[Polygon] | None
-    # No-go zones ride in onArI from firmware 1.17 on; up to 1.13 they
-    # arrive in onSpecialContour and this stays None.
+    # Section 2: always in the 1.17 dialect, and in the chain dialect on a
+    # class whose profile claims it. onSpecialContour carries no-go zones
+    # too, up to firmware 1.13 — see parse_special_contour.
     nogo: list[Polygon] | None = None
 
 
@@ -303,12 +304,20 @@ def _is_point_list_dialect(entries: list[list[str]]) -> bool:
     return False
 
 
-def parse_area_info(blob: bytes) -> AreaInfo:
-    """Parse onArI, in whichever dialect the firmware speaks."""
+def parse_area_info(blob: bytes, area_nogo: bool = False) -> AreaInfo:
+    """Parse onArI, in whichever dialect the firmware speaks.
+
+    *area_nogo* says whether this device's section 2 has been confirmed to
+    hold its no-go zones; see ``MowerProfile.area_nogo``. It reaches only
+    the chain dialect, where the alternative is the merge into the mowing
+    zones that every class had before: the 1.17 dialect has read section 2
+    as the no-go set since before there was a flag, and nothing here
+    changes that.
+    """
     entries = json.loads(blob)
     if _is_point_list_dialect(entries):
         return _parse_area_info_v117(entries)
-    return _parse_area_info_chain(entries)
+    return _parse_area_info_chain(entries, area_nogo)
 
 
 # Section 4 is unused in every capture this parser was written from; the
@@ -363,7 +372,9 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
     )
 
 
-def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
+def _parse_area_info_chain(
+    entries: list[list[str]], area_nogo: bool
+) -> AreaInfo:
     """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 outlines, 6 edges.
 
     Entry format: ``["<area>", "<section>", "<flag>", *items]`` where flag
@@ -405,20 +416,30 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
         if len(entry) > 2 and entry[2] == "1":
             sections.setdefault(entry[1], []).extend(entry[3:])
 
-    # ponytail: sections 1 and 2 are merged into one zones list — every
-    # captured onArI updates them together (both flag "1" or both "0").
-    # If a capture ever shows one without the other, one section's zones
-    # would wipe the other's: split them into separate None-able fields
-    # like the rest at that point.
-    zones: list[Polygon] | None = None
-    if "1" in sections or "2" in sections:
-        if ("1" in sections) != ("2" in sections):
-            _LOGGER.debug(
-                "onArI updated zone section %s without its pair; the "
-                "sections-always-move-together assumption may be wrong",
-                "1" if "1" in sections else "2",
-            )
-        zones = _polygons(sections.get("1", []) + sections.get("2", []))
+    # Section 2 holds the no-go zones on a class that says so, as it
+    # already does in the 1.17 dialect. The GOAT O800 RTK of issue #41 is
+    # the one such class: of its three areas, the one carrying a
+    # section-2 ring is the one its owner has a no-go zone in, and the
+    # other two carry nothing. That is about position, not size — a small
+    # ring passes just as well for a small mowing zone, which is why the
+    # O1200's section-2 point counts prove nothing either way and are not
+    # part of the argument.
+    #
+    # Everywhere else the section joins section 1's mowing zones, which is
+    # what every class did before one of them was checked. The O1200
+    # LiDAR Pro is why: its section 2 holds two rings inside one of the
+    # two rectangles its own onSpecialContour calls a no-go zone, and
+    # says nothing at all about the other, so reading it as the no-go set
+    # there would drop a real zone (PR #136 review). Keeping the merge
+    # leaves that mower exactly as it was.
+    zones = _polygons(sections["1"]) if "1" in sections else None
+    nogo = _polygons(sections["2"]) if "2" in sections else None
+    if not area_nogo:
+        if zones is None:
+            zones = nogo
+        elif nogo is not None:
+            zones = zones + nogo
+        nogo = None
 
     boundaries: list[Polygon] | None = None
     if "5" in sections:
@@ -434,6 +455,7 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
             boundaries=boundaries, zones=zones, flush_edges=flush_edges
         ),
         obstacles=obstacles,
+        nogo=nogo,
     )
 
 
