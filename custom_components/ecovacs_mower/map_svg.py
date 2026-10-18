@@ -111,9 +111,11 @@ def render(mower_map: MowerMap) -> str:
             f'stroke="{_ZONE}" stroke-width="1" stroke-dasharray="4 3"/>'
         )
     for polygon in mower_map.corridors:
+        # Open: these are arcs of the lawn outline, marking where the
+        # mower is told to mow flush against the edge — not rings.
         parts.append(
-            f'<path class="corridor" d="{path(polygon)}" fill="none" '
-            f'stroke="{_CORRIDOR}" stroke-width="1"/>'
+            f'<path class="corridor" d="{path(polygon, close=False)}" '
+            f'fill="none" stroke="{_CORRIDOR}" stroke-width="1"/>'
         )
     for polygon in mower_map.nogo_zones:
         parts.append(

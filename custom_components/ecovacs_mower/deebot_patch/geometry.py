@@ -322,6 +322,14 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
     before it and only the last area survived — for the outline that meant
     two thirds of the map silently disappeared.
 
+    Section 6 is named after a guess, and the name is wrong. On that
+    mower all 230, 106 and 186 points of its three records lie exactly on
+    the outline of area 1, and its owner drew them in the app to say where
+    the mower should mow flush against the lawn edge. They are arcs of the
+    boundary, not passages between lawns, which is why they are the one
+    layer the renderer must leave open. The field keeps the name for now:
+    changing it reaches the event, the store and the renderer.
+
     An area's items are therefore accumulated into their section instead of
     replacing it. One consequence is worth naming: a section is published
     as soon as *any* area updates it, and what is published then holds only
