@@ -232,7 +232,16 @@ class EcovacsController:
                             # warning, and this registry means "belongs to a
                             # patched mower". Registering one would apply the
                             # gate to a device nothing else in here patched.
-                            register_mower_bus(device.events)
+                            #
+                            # The profile goes with it because a message
+                            # handler has no other way to learn which mower
+                            # it is reading — see state_precedence.register.
+                            register_mower_bus(
+                                device.events,
+                                profile_for_class(
+                                    device.device_info["class"]
+                                ),
+                            )
                         await device.initialize(mqtt)
                         self._devices.append(device)
                         if device.capabilities.device_type is DeviceType.MOWER:
