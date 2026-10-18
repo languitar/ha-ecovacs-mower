@@ -37,6 +37,7 @@ class MowerStateRecord:
     suppressed: State | None = None
     map_id: str | None = None
     job_type: str | None = None
+    area_nogo: bool = False
 
     def note_job(self, content: object) -> None:
         """Remember the type of the running job, from ``cleanState.content``.
@@ -88,6 +89,23 @@ class MowerStateRecord:
         later start begins a new ``auto`` job.
         """
         self.job_type = None
+
+    def note_area_nogo(self) -> None:
+        """onArI reported this device's no-go zones itself.
+
+        Section 2 of onArI carries them in both dialects, and
+        onSpecialContour carries them as well up to firmware 1.13: two
+        sources for one complete-set event, which would otherwise take
+        turns overwriting each other. onArI wins, because it reports per
+        area and traced, while onSpecialContour has been seen carrying a
+        single point on the very mower that names the same zone in full on
+        onArI (issue #41).
+
+        Never cleared. A device that has reported its zones there once
+        goes on reporting them there, and a later onSpecialContour
+        heartbeat with nothing to say must not hand the layer back.
+        """
+        self.area_nogo = True
 
     def dock(self) -> None:
         """The mower is on its charger."""

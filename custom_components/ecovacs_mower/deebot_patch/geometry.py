@@ -141,8 +141,8 @@ class AreaInfo:
 
     map_info: MapInfo
     obstacles: list[Polygon] | None
-    # No-go zones ride in onArI from firmware 1.17 on; up to 1.13 they
-    # arrive in onSpecialContour and this stays None.
+    # Section 2, in both dialects. onSpecialContour carries no-go zones
+    # too, up to firmware 1.13 — see parse_special_contour.
     nogo: list[Polygon] | None = None
 
 
@@ -338,20 +338,16 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
         if len(entry) > 2 and entry[2] == "1":
             sections.setdefault(entry[1], []).extend(entry[3:])
 
-    # ponytail: sections 1 and 2 are merged into one zones list — every
-    # captured onArI updates them together (both flag "1" or both "0").
-    # If a capture ever shows one without the other, one section's zones
-    # would wipe the other's: split them into separate None-able fields
-    # like the rest at that point.
-    zones: list[Polygon] | None = None
-    if "1" in sections or "2" in sections:
-        if ("1" in sections) != ("2" in sections):
-            _LOGGER.debug(
-                "onArI updated zone section %s without its pair; the "
-                "sections-always-move-together assumption may be wrong",
-                "1" if "1" in sections else "2",
-            )
-        zones = _polygons(sections.get("1", []) + sections.get("2", []))
+    # Section 2 is the no-go zones, as it already is in the 1.17 dialect.
+    # It used to be merged into section 1's mowing zones, because no
+    # capture told them apart: the two sections always moved together and
+    # the O1200's section-2 rings could pass for small zones. The GOAT
+    # O800 RTK of issue #41 separates them — of its three areas, the one
+    # carrying a section-2 ring is the one its owner has a no-go zone in —
+    # and the O1200's sizes agree once looked at that way: 78 and 309
+    # points against section 1's 1471, 475 and 723.
+    zones = _polygons(sections["1"]) if "1" in sections else None
+    nogo = _polygons(sections["2"]) if "2" in sections else None
 
     boundaries: list[Polygon] | None = None
     if "5" in sections:
@@ -367,6 +363,7 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
             boundaries=boundaries, zones=zones, corridors=corridors
         ),
         obstacles=obstacles,
+        nogo=nogo,
     )
 
 

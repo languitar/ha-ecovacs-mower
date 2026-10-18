@@ -243,8 +243,11 @@ class OnArI(_MapMessage):
         if area.obstacles is not None:
             event_bus.notify(MowerObstaclesEvent(obstacles=area.obstacles))
         if area.nogo is not None:
-            # 1.17 only: up to 1.13 the no-go zones come in their own
-            # onSpecialContour message and this stays None.
+            # Section 2, in both dialects. A mower that reports its no-go
+            # zones here outranks onSpecialContour, which carries them too
+            # up to firmware 1.13 — see MowerStateRecord.note_area_nogo.
+            if (record := record_for(event_bus)) is not None:
+                record.note_area_nogo()
             event_bus.notify(MowerNoGoZonesEvent(zones=area.nogo))
         return HandlingResult.success()
 
@@ -283,6 +286,9 @@ class OnSpecialContour(_MapMessage):
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
+        record = record_for(event_bus)
+        if record is not None and record.area_nogo:
+            return HandlingResult.success()  # onArI owns them here
         zones = parse_special_contour(blob)
         if zones is None:
             return HandlingResult.analyse()  # nothing readable in it

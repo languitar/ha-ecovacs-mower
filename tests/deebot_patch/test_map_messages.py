@@ -40,6 +40,15 @@ _MAP_EVENTS = (
 )
 
 
+def _nogo_events(event_bus: Mock) -> list[Any]:
+    """Every MowerNoGoZonesEvent *event_bus* has been handed, in order."""
+    return [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], MowerNoGoZonesEvent)
+    ]
+
+
 def _notified(message, key: str) -> list[Any]:
     """Feed every captured fragment of a fixture through the handler.
 
@@ -71,13 +80,15 @@ def test_on_mi_idle_notifies_nothing() -> None:
     assert _notified(OnMI, "on_mi_idle") == []
 
 
-def test_on_ari_multipart_notifies_map_info_and_obstacles() -> None:
+def test_on_ari_multipart_notifies_map_info_obstacles_and_nogo() -> None:
     events = _notified(OnArI, "on_ari_multipart")
-    assert len(events) == 2
+    assert len(events) == 3
     map_info = next(e for e in events if isinstance(e, MowerMapInfoEvent))
     obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
-    assert map_info.boundaries is not None and len(map_info.zones) == 5
+    nogo = next(e for e in events if isinstance(e, MowerNoGoZonesEvent))
+    assert map_info.boundaries is not None and len(map_info.zones) == 3
     assert len(obstacles.obstacles) == 15
+    assert len(nogo.zones) == 2  # section 2, no longer merged into zones
 
 
 def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
@@ -99,6 +110,47 @@ def test_on_special_contour_notifies_nogo_zones() -> None:
     assert len(events) == 1
     assert isinstance(events[0], MowerNoGoZonesEvent)
     assert len(events[0].zones) == 2
+
+
+def test_on_ari_nogo_zones_outrank_on_special_contour() -> None:
+    # Both messages carry no-go zones on a 1.13 mower, and the event holds
+    # the complete set, so without a rule they would overwrite each other
+    # turn by turn. onArI reports per area and traced; onSpecialContour on
+    # one of those mowers carries a single point (issue #41).
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        register,
+    )
+
+    event_bus = Mock()
+    register(event_bus)
+    for item in sorted(
+        FIXTURES["on_ari_multipart"],
+        key=lambda i: int(i["payload"]["body"]["data"]["index"]),
+    ):
+        OnArI.handle(event_bus, deepcopy(item["payload"]))
+    from_on_ari = _nogo_events(event_bus)
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+
+    # The traced section-2 zones stand; the contour message added nothing.
+    assert [len(event.zones) for event in from_on_ari] == [2]
+    assert _nogo_events(event_bus) == from_on_ari
+
+
+def test_on_special_contour_is_published_until_on_ari_claims_the_zones() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        register,
+    )
+
+    event_bus = Mock()
+    register(event_bus)
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+
+    zones = _nogo_events(event_bus)
+    assert len(zones) == 1 and len(zones[0].zones) == 2
 
 
 def test_on_special_contour_without_a_polygon_publishes_nothing() -> None:
