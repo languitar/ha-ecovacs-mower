@@ -1,4 +1,28 @@
 {
+ "on_special_contour_no_polygon": [
+  {
+   "message": "onSpecialContour",
+   "payload": {
+    "header": {
+     "tzm": 120,
+     "ts": "0",
+     "fwVer": "1.13.8"
+    },
+    "body": {
+     "data": {
+      "mid": "1",
+      "batid": "kgpgph",
+      "serial": "1",
+      "index": "0",
+      "update": "0",
+      "info": "XQAABAA5AAAAAC2WwEIAXhRj0kw/XAILmSYcpMlJCfmMOcjXdrPd8NGTXyqISjcWvzaNwwtzvwA=",
+      "infoSize": 57,
+      "using": 1
+     }
+    }
+   }
+  }
+ ],
  "on_special_contour": [
   {
    "message": "onSpecialContour",

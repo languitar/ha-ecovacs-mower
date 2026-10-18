@@ -240,6 +240,20 @@ def test_parse_special_contour() -> None:
     ]
 
 
+def test_parse_special_contour_without_a_polygon_is_no_update() -> None:
+    # What a GOAT O800 RTK on fw 1.13.8 pushes while keeping its real
+    # no-go zone in onArI section 2:
+    #   [["1","1","2","-1828859640,-1828859302","-22813,13082;"]]
+    # field 4 is a single point and field 3 is not coordinates. One point
+    # is not a polygon, and as the complete no-go set it replaced the
+    # zones the mower had really reported.
+    assert parse_special_contour(_blob("on_special_contour_no_polygon")) is None
+
+
+def test_parse_special_contour_with_no_records_means_none_exist() -> None:
+    assert parse_special_contour(b"[]") == []
+
+
 # Firmware 1.17 (issue #41) sends the same blobs in a different dialect:
 # explicit point lists instead of chain codes, no per-section update flag,
 # and onMapTrace in place of onMapTrack. Fixtures suffixed _v117 are real

@@ -283,7 +283,8 @@ class OnSpecialContour(_MapMessage):
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
-        event_bus.notify(
-            MowerNoGoZonesEvent(zones=parse_special_contour(blob))
-        )
+        zones = parse_special_contour(blob)
+        if zones is None:
+            return HandlingResult.analyse()  # nothing readable in it
+        event_bus.notify(MowerNoGoZonesEvent(zones=zones))
         return HandlingResult.success()

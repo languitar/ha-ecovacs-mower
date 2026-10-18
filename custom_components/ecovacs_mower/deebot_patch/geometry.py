@@ -434,6 +434,28 @@ def parse_map_trace(blob: bytes) -> CoveredArea:
     )
 
 
-def parse_special_contour(blob: bytes) -> list[Polygon]:
-    """Parse onSpecialContour no-go zones: plain ``x,y;x,y;…;`` polygons."""
-    return [_points(entry[4]) for entry in json.loads(blob)]
+def parse_special_contour(blob: bytes) -> list[Polygon] | None:
+    """Parse onSpecialContour no-go zones: plain ``x,y;x,y;…;`` polygons.
+
+    A record carrying fewer than three points is not a polygon and is
+    dropped. A GOAT O800 RTK (``9bts2s``, fw 1.13.8) keeps its no-go zone
+    in onArI section 2 and pushes this on onSpecialContour regardless:
+
+        [["1","1","2","-1828859640,-1828859302","-22813,13082;"]]
+
+    Field 4 is one point, and field 3 is not coordinates at all.
+
+    ``None`` means "no update", the same as everywhere else here, and is
+    what a blob of records that all fail that test decodes to: the event
+    carries the complete no-go set, so publishing the empty remainder
+    would wipe whatever the mower had reported before it — which is how
+    that single point became an entire no-go layer (issue #41). An empty
+    list is still "there are none", and only a blob that really holds no
+    records decodes to one.
+    """
+    records = json.loads(blob)
+    contours = (_points(entry[4]) for entry in records)
+    polygons = [points for points in contours if len(points) >= 3]
+    if records and not polygons:
+        return None
+    return polygons

@@ -101,6 +101,13 @@ def test_on_special_contour_notifies_nogo_zones() -> None:
     assert len(events[0].zones) == 2
 
 
+def test_on_special_contour_without_a_polygon_publishes_nothing() -> None:
+    # fw 1.13.8 pushes a record whose geometry is a single point while the
+    # real no-go zone rides in onArI section 2. Published, it would have
+    # replaced that zone with the one point.
+    assert _notified(OnSpecialContour, "on_special_contour_no_polygon") == []
+
+
 def test_corrupt_info_is_swallowed() -> None:
     # Map data is best effort: garbage must not raise out of the handler.
     event_bus = Mock()
