@@ -801,6 +801,20 @@ class GetMapTrack(ExecuteCommand):
     def __init__(self) -> None:
         super().__init__({})
 
+    def _get_payload(self) -> dict[str, Any]:
+        """Send the empty object the app sends, not a header alone.
+
+        ``JsonCommand._get_payload`` only adds ``body`` when there are args
+        (``if len(self._args) > 0``), so an empty one goes out as a header
+        with no body at all. The mower answers that ``code 0, "ok"`` and
+        then sends nothing — captured on an O800 RTK, firmware 1.13.8,
+        docked: ack in 99 ms, no ``onMapTrack`` after it, the map
+        unchanged. The app's request carries ``{"body": {"data": {}}}`` and
+        is answered with the whole plan. Same ack either way, so the
+        difference is invisible without the payload in front of you.
+        """
+        return {**super()._get_payload(), "body": {"data": {}}}
+
 
 class SetRainDelay(ExecuteCommand):
     """Write the rain sensor's setting and its post-rain hold.
