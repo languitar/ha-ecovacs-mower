@@ -7,7 +7,11 @@ import re
 import pytest
 
 from custom_components.ecovacs_mower.map import MowerMap
-from custom_components.ecovacs_mower.map_svg import render
+from custom_components.ecovacs_mower.map_svg import (
+    _LANE,
+    _LAWN_FILL,
+    render,
+)
 
 BOUNDARY = [(0, 0), (10000, 0), (10000, 10000), (0, 10000)]
 
@@ -65,6 +69,30 @@ def test_area_labels_are_drawn_where_the_mower_puts_them() -> None:
     assert label is not None
     # Character data, so the name has to be escaped rather than inlined.
     assert label.group(1) == "Vorgarten &amp; &lt;Hinten&gt;"
+
+
+def test_mowed_grass_reads_as_lighter_than_grass_still_to_cut() -> None:
+    """What is left to mow is the one thing a glance should answer.
+
+    The two greens were a quarter of a step apart in lightness once,
+    which on a real map left a finished lawn and an untouched one
+    looking alike. Asserted as a contrast ratio rather than as hex, so
+    the palette can be retuned but not flattened.
+    """
+
+    def luminance(colour: str) -> float:
+        channels = [int(colour[i : i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [
+            c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+            for c in channels
+        ]
+        return (
+            0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+        )
+
+    mowed, uncut = luminance(_LANE), luminance(_LAWN_FILL)
+    assert mowed > uncut
+    assert (mowed + 0.05) / (uncut + 0.05) >= 3
 
 
 def test_empty_map_renders_placeholder() -> None:
