@@ -76,13 +76,16 @@ class MowerRemainingEvent(Event):
     """The lanes still to mow, keyed (zone, row).
 
     Not coverage: see ``MapTrack``. An empty list is a row with nothing
-    left in it. A blob carries either the whole plan, in answer to
-    ``GetMapTrack``, or the single row under the mower, pushed as it
-    works — so the rows named here replace their stored selves and the
-    rest stand.
+    left in it.
+
+    ``complete`` is the whole remaining plan, in answer to
+    ``GetMapTrack``: it is the entire truth and anything not in it is
+    finished. Otherwise this is the single row the mower is working on,
+    pushed as it goes, and only that row changes.
     """
 
     rows: dict[tuple[str, int], list[Segment]]
+    complete: bool = False
 
 
 @dataclass(frozen=True)
@@ -272,8 +275,15 @@ class OnMapTrack(_MapMessage):
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         track = parse_map_track(blob)
-        if track.remaining:
-            event_bus.notify(MowerRemainingEvent(rows=track.remaining))
+        # An empty full snapshot is the most informative blob there is:
+        # it says the job is finished. Only an empty incremental one has
+        # nothing in it.
+        if track.remaining or track.full:
+            event_bus.notify(
+                MowerRemainingEvent(
+                    rows=track.remaining, complete=track.full
+                )
+            )
         return HandlingResult.success()
 
 

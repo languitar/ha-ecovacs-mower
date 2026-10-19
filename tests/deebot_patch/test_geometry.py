@@ -288,6 +288,29 @@ def test_parse_area_info_chain_section_2_alone_is_a_zone_without_the_flag() -> (
     assert area.nogo is None
 
 
+def test_parse_map_track_marks_a_full_plan() -> None:
+    # entry[1] "1" is the whole remaining plan, sent in answer to
+    # getMapTrack; "2" is the single row the mower is working on. Captured
+    # on an O800 RTK (9bts2s, fw 1.13.8) with the app open beside it.
+    blob = json.dumps(
+        [["1", "1", "1;1;43;-22652,4669;-22436,5387", "1;1;44;-1,2;-3,4"]]
+    ).encode()
+
+    track = parse_map_track(blob)
+
+    assert track.full is True
+    assert len(track.remaining) == 2
+
+
+def test_parse_map_track_marks_a_single_row_push() -> None:
+    blob = json.dumps([["1", "2", "1;1;155;-22199,14450;-17050,14450"]]).encode()
+
+    track = parse_map_track(blob)
+
+    assert track.full is False
+    assert track.remaining == {("1", 155): [((-22199, 14450), (-17050, 14450))]}
+
+
 def test_parse_map_track_single_lane() -> None:
     track = parse_map_track(_blob("on_map_track_single_lane"))
     assert track.remaining == {("3", 67): [((-26825, 2400), (-26825, 4199))]}

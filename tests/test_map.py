@@ -181,6 +181,43 @@ def test_round_trip_keeps_the_covered_area() -> None:
     assert restored.covered_holes == [[(10, 10), (20, 20)]]
 
 
+def test_a_full_plan_replaces_the_stored_one() -> None:
+    # A row the mower has finished is absent from the next full plan, not
+    # reported empty. Merging one keeps every finished row for ever.
+    mower_map = MowerMap()
+    mower_map.update_remaining(
+        {("1", 1): [((0, 0), (900, 0))], ("1", 2): [((0, 100), (900, 100))]},
+        complete=True,
+    )
+    mower_map.update_remaining({("1", 2): [((0, 100), (400, 100))]}, complete=True)
+
+    assert mower_map.remaining == {("1", 2): [((0, 100), (400, 100))]}
+
+
+def test_an_empty_full_plan_means_the_job_is_done() -> None:
+    mower_map = MowerMap()
+    mower_map.update_remaining({("1", 1): [((0, 0), (900, 0))]}, complete=True)
+    mower_map.update_remaining({}, complete=True)
+
+    assert mower_map.remaining == {}
+
+
+def test_a_single_reported_row_leaves_the_others_alone() -> None:
+    # The mower pushes the row it is working on while it works; the rest of
+    # the plan is not in that blob and must not be dropped.
+    mower_map = MowerMap()
+    mower_map.update_remaining(
+        {("1", 1): [((0, 0), (900, 0))], ("1", 2): [((0, 100), (900, 100))]},
+        complete=True,
+    )
+    mower_map.update_remaining({("1", 2): [((0, 100), (400, 100))]})
+
+    assert mower_map.remaining == {
+        ("1", 1): [((0, 0), (900, 0))],
+        ("1", 2): [((0, 100), (400, 100))],
+    }
+
+
 def test_sampled_track_returns_a_short_track_as_it_is() -> None:
     mower_map = MowerMap()
     assert mower_map.sampled_track(10) == []
