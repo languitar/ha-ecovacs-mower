@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -32,12 +32,21 @@ FIXTURES: dict[str, list[Any]] = json.loads(
 
 
 _MAP_EVENTS = (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
     MowerObstaclesEvent,
 )
+
+
+def _nogo_events(event_bus: Mock) -> list[Any]:
+    """Every MowerNoGoZonesEvent *event_bus* has been handed, in order."""
+    return [
+        call.args[0]
+        for call in event_bus.notify.call_args_list
+        if isinstance(call.args[0], MowerNoGoZonesEvent)
+    ]
 
 
 def _notified(message, key: str) -> list[Any]:
@@ -63,21 +72,34 @@ def test_on_mi_notifies_boundary() -> None:
     assert len(events) == 1
     event = events[0]
     assert isinstance(event, MowerMapInfoEvent)
-    assert event.boundary[0] == (-31000, 1800)
-    assert event.zones is None and event.corridors is None
+    assert event.boundaries[0][0] == (-31000, 1800)
+    assert event.zones is None and event.flush_edges is None
+
+
+def test_on_mi_notifies_every_outline_and_the_corridors() -> None:
+    events = _notified(OnMI, "on_mi_multi_area")
+    assert len(events) == 1
+    assert [len(outline) for outline in events[0].boundaries] == [
+        2420,
+        1222,
+        499,
+    ]
+    assert [len(corridor) for corridor in events[0].corridors] == [11, 79]
 
 
 def test_on_mi_idle_notifies_nothing() -> None:
     assert _notified(OnMI, "on_mi_idle") == []
 
 
-def test_on_ari_multipart_notifies_map_info_and_obstacles() -> None:
+def test_on_ari_multipart_notifies_map_info_obstacles_and_nogo() -> None:
     events = _notified(OnArI, "on_ari_multipart")
-    assert len(events) == 2
+    assert len(events) == 3
     map_info = next(e for e in events if isinstance(e, MowerMapInfoEvent))
     obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
-    assert map_info.boundary is not None and len(map_info.zones) == 5
+    nogo = next(e for e in events if isinstance(e, MowerNoGoZonesEvent))
+    assert map_info.boundaries is not None and len(map_info.zones) == 3
     assert len(obstacles.obstacles) == 15
+    assert len(nogo.zones) == 2  # section 2, no longer merged into zones
 
 
 def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
@@ -87,11 +109,11 @@ def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
     assert len(events[0].obstacles) == 14
 
 
-def test_on_map_track_notifies_coverage() -> None:
+def test_on_map_track_notifies_the_rows_still_to_mow() -> None:
     events = _notified(OnMapTrack, "on_map_track_single_lane")
     assert len(events) == 1
-    assert isinstance(events[0], MowerCoverageEvent)
-    assert events[0].lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+    assert isinstance(events[0], MowerRemainingEvent)
+    assert events[0].rows == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
 
 
 def test_on_special_contour_notifies_nogo_zones() -> None:
@@ -99,6 +121,54 @@ def test_on_special_contour_notifies_nogo_zones() -> None:
     assert len(events) == 1
     assert isinstance(events[0], MowerNoGoZonesEvent)
     assert len(events[0].zones) == 2
+
+
+def test_on_ari_nogo_zones_outrank_on_special_contour() -> None:
+    # Both messages carry no-go zones on a 1.13 mower, and the event holds
+    # the complete set, so without a rule they would overwrite each other
+    # turn by turn. onArI reports per area and traced; onSpecialContour on
+    # one of those mowers carries a single point (issue #41).
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        register,
+    )
+
+    event_bus = Mock()
+    register(event_bus)
+    for item in sorted(
+        FIXTURES["on_ari_multipart"],
+        key=lambda i: int(i["payload"]["body"]["data"]["index"]),
+    ):
+        OnArI.handle(event_bus, deepcopy(item["payload"]))
+    from_on_ari = _nogo_events(event_bus)
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+
+    # The traced section-2 zones stand; the contour message added nothing.
+    assert [len(event.zones) for event in from_on_ari] == [2]
+    assert _nogo_events(event_bus) == from_on_ari
+
+
+def test_on_special_contour_is_published_until_on_ari_claims_the_zones() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
+        register,
+    )
+
+    event_bus = Mock()
+    register(event_bus)
+    OnSpecialContour.handle(
+        event_bus, deepcopy(FIXTURES["on_special_contour"][0]["payload"])
+    )
+
+    zones = _nogo_events(event_bus)
+    assert len(zones) == 1 and len(zones[0].zones) == 2
+
+
+def test_on_special_contour_without_a_polygon_publishes_nothing() -> None:
+    # fw 1.13.8 pushes a record whose geometry is a single point while the
+    # real no-go zone rides in onArI section 2. Published, it would have
+    # replaced that zone with the one point.
+    assert _notified(OnSpecialContour, "on_special_contour_no_polygon") == []
 
 
 def test_corrupt_info_is_swallowed() -> None:
@@ -175,7 +245,7 @@ def test_on_mi_v117_notifies_boundary() -> None:
     events = _notified(OnMI, "on_mi_full_v117")
     assert len(events) == 1
     assert isinstance(events[0], MowerMapInfoEvent)
-    assert events[0].boundary[0] == (-10800, 7900)
+    assert events[0].boundaries[0][0] == (-10800, 7900)
 
 
 def test_on_mi_v117_idle_notifies_nothing() -> None:
@@ -188,7 +258,7 @@ def test_on_ari_v117_notifies_zones_obstacles_and_nogo() -> None:
     obstacles = next(e for e in events if isinstance(e, MowerObstaclesEvent))
     nogo = next(e for e in events if isinstance(e, MowerNoGoZonesEvent))
     assert len(map_info.zones) == 4
-    assert map_info.boundary is None  # 1.17 sends the outline via onMI
+    assert map_info.boundaries is None  # 1.17 sends it via onMI
     assert len(obstacles.obstacles) == 29
     # No onSpecialContour on 1.17: the no-go zones ride in onArI instead.
     assert len(nogo.zones) == 4
@@ -231,9 +301,9 @@ def test_on_map_info_publishes_the_captured_boundary() -> None:
     events = _notified(OnMapInfo, "on_map_info_v2_g1800")
     assert len(events) == 1
     assert isinstance(events[0], MowerMapInfoEvent)
-    assert events[0].boundary[0] == (-11918, 1959)
-    assert len(events[0].boundary) == 692
-    assert events[0].zones is None and events[0].corridors is None
+    assert events[0].boundaries[0][0] == (-11918, 1959)
+    assert len(events[0].boundaries[0]) == 692
+    assert events[0].zones is None and events[0].flush_edges is None
 
 
 def test_on_map_info_publishes_nothing_before_the_last_fragment() -> None:
@@ -307,7 +377,7 @@ def test_on_map_info_does_not_inherit_the_outline_version_filter() -> None:
         if isinstance(call.args[0], MowerMapInfoEvent)
     ]
     assert len(events) == 1
-    assert events[0].boundary[0] == (-11918, 1959)
+    assert events[0].boundaries[0][0] == (-11918, 1959)
 
 
 def test_on_map_trace_notifies_the_live_runs_of_a_job() -> None:

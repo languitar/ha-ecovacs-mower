@@ -27,9 +27,9 @@ from homeassistant.helpers.event import async_call_later
 from homeassistant.util import dt as dt_util
 
 from . import EcovacsMowerConfigEntry
-from .deebot_patch.commands import GetPosMower
+from .deebot_patch.commands import GetMapTrack, GetPosMower
 from .deebot_patch.map_messages import (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -107,7 +107,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
 
         self._subscribe(MowerMapInfoEvent, self._on_geometry)
         self._subscribe(MowerObstaclesEvent, self._on_geometry)
-        self._subscribe(MowerCoverageEvent, self._on_geometry)
+        self._subscribe(MowerRemainingEvent, self._on_geometry)
         self._subscribe(MowerCoveredAreaEvent, self._on_geometry)
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
@@ -145,15 +145,22 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
 
     @override
     async def async_update(self) -> None:
-        """Ask the mower where it is.
+        """Ask the mower where it is and what it has left to cut.
 
         Reached through homeassistant.update_entity: the entity is not polled,
         so this only happens when someone asks. A live marker is an
         automation that calls it every few seconds while the mower is out,
-        and nobody else pays for the commands. The answer arrives as a
-        PositionsEvent, like a pushed position.
+        and nobody else pays for the commands. The answers arrive as a
+        PositionsEvent and an onMapTrack push, like the unsolicited ones.
+
+        The remaining plan is asked for here as well as on the poll tick
+        because the tick stops at the dock, and the end of a job is
+        exactly when the map is most worth refreshing: a finished lawn
+        has nothing left in it, and nobody is told that until somebody
+        asks.
         """
         await self._execute_command(GetPosMower())
+        await self._execute_command(GetMapTrack())
 
     def _bump(self) -> None:
         # Every write supersedes a pending trailing refresh, whichever event
@@ -166,7 +173,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self,
         event: MowerMapInfoEvent
         | MowerObstaclesEvent
-        | MowerCoverageEvent
+        | MowerRemainingEvent
         | MowerCoveredAreaEvent
         | MowerNoGoZonesEvent,
     ) -> None:

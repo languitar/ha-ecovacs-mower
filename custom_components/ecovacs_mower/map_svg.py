@@ -4,11 +4,17 @@ Pure Python, stdlib only. The output is served by the image entity as
 image/svg+xml; layer classes exist for the tests, styling is inline. The
 coordinate system is the mower's own map frame in mm (dock at origin);
 the y axis is flipped because SVG grows downwards.
+
+The driven path is deliberately not a layer here. ``MowerMap`` still
+keeps it and the image entity still publishes it as an attribute, for a
+card that wants to draw it; what it is not is something this renderer
+can show honestly. See ``MowerMap.track``.
 """
 
 from __future__ import annotations
 
 import math
+from xml.sax.saxutils import escape
 
 from .deebot_patch.geometry import Point, Polygon
 from .map import MowerMap
@@ -17,15 +23,28 @@ _SCALE = 0.02  # px per mm — a 30 m lawn becomes ~600 px
 _MARGIN_MM = 500
 
 _BACKGROUND = "#1c2620"
-_LAWN_FILL = "#2e5d34"
-_LAWN_EDGE = "#7fd68a"
-_LANE = "#4a8f52"
+# The lawn is one green, because the mower never says a lawn is mowed —
+# it says what is left of the job it is on. That is _UNCUT, drawn over
+# the lawn in the lighter, yellower green of grass still standing; where
+# it is absent the map is making no claim. Light over dark rather than
+# the other way round because the remaining lanes are thin and must
+# carry at a dashboard's size, and a lawn outside the current job gets
+# no lanes at all and must not read as finished.
+_LAWN_FILL = "#2c4a33"
+_LAWN_EDGE = "#cdf0d4"
+_UNCUT = "#b7e26a"
+# The 1.17 onMapTrace layer is the other way round — its own docstring
+# reads section 1 as the outline of what HAS been mowed — so it keeps a
+# colour of its own until somebody checks that reading against hardware
+# the way onMapTrack has now been checked.
+_MOWED = "#7ecb87"
 _ZONE = "#c9a94e"
-_CORRIDOR = "#5aa0c8"
+_FLUSH_EDGE = "#5aa0c8"
+_CORRIDOR = "#8f7fd6"
+_LABEL = "#e6f0e8"
 _NOGO_FILL = "#8f3a3a"
 _NOGO_EDGE = "#e07a7a"
 _OBSTACLE = "#c86a2e"
-_TRACK = "#e8e16a"
 _MOWER = "#ffe93d"
 _DOCK = "#5aa0c8"
 
@@ -42,19 +61,23 @@ def render(mower_map: MowerMap) -> str:
     if mower_map.is_empty:
         return _PLACEHOLDER
 
-    points: list[Point] = list(mower_map.track)
-    points.append(mower_map.dock)
+    points: list[Point] = [mower_map.dock]
     for polygon in (
-        [mower_map.boundary] if mower_map.boundary else []
-    ) + mower_map.zones + mower_map.corridors + mower_map.obstacles + (
-        mower_map.nogo_zones
-    ) + mower_map.covered:
+        mower_map.boundaries
+        + mower_map.zones
+        + mower_map.flush_edges
+        + mower_map.corridors
+        + mower_map.obstacles
+        + mower_map.nogo_zones
+        + mower_map.covered
+    ):
         points.extend(polygon)
-    for segments in mower_map.lanes.values():
+    for segments in mower_map.remaining.values():
         for start, end in segments:
             points.extend((start, end))
     if mower_map.position:
         points.append(mower_map.position)
+    points.extend(point for point, _ in mower_map.labels)
 
     min_x = min(p[0] for p in points) - _MARGIN_MM
     max_x = max(p[0] for p in points) + _MARGIN_MM
@@ -78,9 +101,9 @@ def render(mower_map: MowerMap) -> str:
         f'<rect width="{width:.0f}" height="{height:.0f}" '
         f'fill="{_BACKGROUND}"/>',
     ]
-    if mower_map.boundary:
+    for polygon in mower_map.boundaries:
         parts.append(
-            f'<path class="boundary" d="{path(mower_map.boundary)}" '
+            f'<path class="boundary" d="{path(polygon)}" '
             f'fill="{_LAWN_FILL}" stroke="{_LAWN_EDGE}" stroke-width="1.5"/>'
         )
     if mower_map.covered:
@@ -92,15 +115,17 @@ def render(mower_map: MowerMap) -> str:
             for polygon in mower_map.covered + mower_map.covered_holes
         )
         parts.append(
-            f'<path class="covered" d="{rings}" fill="{_LANE}" '
+            f'<path class="covered" d="{rings}" fill="{_MOWED}" '
             'fill-rule="evenodd" opacity="0.9"/>'
         )
-    for segments in mower_map.lanes.values():
+    for segments in mower_map.remaining.values():
         for start, end in segments:
+            # One row's width, so neighbouring rows meet and a block of
+            # them reads as an area rather than as hatching.
             parts.append(
-                f'<path class="lane" d="{path([start, end], close=False)}" '
-                f'stroke="{_LANE}" stroke-width="2" fill="none" '
-                'opacity="0.9"/>'
+                f'<path class="uncut" d="{path([start, end], close=False)}" '
+                f'stroke="{_UNCUT}" stroke-width="2" fill="none" '
+                'opacity="0.95"/>'
             )
     for polygon in mower_map.zones:
         parts.append(
@@ -108,9 +133,17 @@ def render(mower_map: MowerMap) -> str:
             f'stroke="{_ZONE}" stroke-width="1" stroke-dasharray="4 3"/>'
         )
     for polygon in mower_map.corridors:
+        # Open too: a corridor is the passage from one area to the next.
         parts.append(
-            f'<path class="corridor" d="{path(polygon)}" fill="none" '
-            f'stroke="{_CORRIDOR}" stroke-width="1"/>'
+            f'<path class="corridor" d="{path(polygon, close=False)}" '
+            f'fill="none" stroke="{_CORRIDOR}" stroke-width="2"/>'
+        )
+    for polygon in mower_map.flush_edges:
+        # Open: these are arcs of the lawn outline, marking where the
+        # mower is told to mow flush against the edge — not rings.
+        parts.append(
+            f'<path class="flush-edge" d="{path(polygon, close=False)}" '
+            f'fill="none" stroke="{_FLUSH_EDGE}" stroke-width="1"/>'
         )
     for polygon in mower_map.nogo_zones:
         parts.append(
@@ -122,11 +155,12 @@ def render(mower_map: MowerMap) -> str:
             f'<path class="obstacle" d="{path(polygon)}" '
             f'fill="{_OBSTACLE}" opacity="0.8"/>'
         )
-    if len(mower_map.track) >= 1:
+    for point, name in mower_map.labels:
+        label_x, label_y = (float(v) for v in xy(point).split(","))
         parts.append(
-            f'<path class="track" '
-            f'd="{path(mower_map.track, close=False)}" fill="none" '
-            f'stroke="{_TRACK}" stroke-width="1.2" opacity="0.9"/>'
+            f'<text class="label" x="{label_x:.1f}" y="{label_y:.1f}" '
+            f'fill="{_LABEL}" font-family="sans-serif" font-size="11" '
+            f'text-anchor="middle">{escape(name)}</text>'
         )
 
     dock_x, dock_y = (v for v in xy(mower_map.dock).split(","))

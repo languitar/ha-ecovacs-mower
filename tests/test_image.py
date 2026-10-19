@@ -63,7 +63,7 @@ async def test_async_image_renders_the_map() -> None:
     assert image.startswith(b"<svg")
     assert b"No map data yet" in image
 
-    mower_map.update_map_info([(0, 0), (100, 0), (100, 100)], None, None)
+    mower_map.update_map_info([[(0, 0), (100, 0), (100, 100)]], None, None)
     image = await EcovacsMowerMap.async_image(instance)
     assert b"No map data yet" not in image
     assert b'class="boundary"' in image
@@ -322,14 +322,17 @@ def test_track_attribute_is_thinned_and_ends_at_the_mower() -> None:
     assert all(isinstance(point, list) for point in track)
 
 
-async def test_update_entity_asks_the_mower_where_it_is() -> None:
+async def test_update_entity_asks_where_it_is_and_what_is_left() -> None:
     # homeassistant.update_entity is how a live marker is built: an
     # automation calls it as often as it likes while the mower is out. It goes
     # through the entity's wrapper so an unconfirmed command is logged under
     # this integration's logger (issue #26).
     from unittest.mock import AsyncMock
 
-    from custom_components.ecovacs_mower.deebot_patch.commands import GetPosMower
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+        GetPosMower,
+    )
     from custom_components.ecovacs_mower.image import EcovacsMowerMap
 
     instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
@@ -337,8 +340,11 @@ async def test_update_entity_asks_the_mower_where_it_is() -> None:
 
     await instance.async_update()
 
-    instance._execute_command.assert_awaited_once()
-    assert isinstance(instance._execute_command.await_args.args[0], GetPosMower)
+    sent = [call.args[0] for call in instance._execute_command.await_args_list]
+    assert any(isinstance(command, GetPosMower) for command in sent)
+    # The poll tick stops at the dock, so this is the only way to see a
+    # finished lawn empty out.
+    assert any(isinstance(command, GetMapTrack) for command in sent)
 
 
 def test_the_map_is_not_polled() -> None:

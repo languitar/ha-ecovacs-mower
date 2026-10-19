@@ -35,10 +35,22 @@ def test_zone_mowing_is_enabled_only_for_validated_class() -> None:
     } == {"e4gqia", "77atlz", "2i0fns"}
 
 
+def test_area_names_are_enabled_only_for_the_validated_class() -> None:
+    from custom_components.ecovacs_mower.deebot_patch.hardware import (
+        SUPPORTED_CLASSES,
+    )
+
+    assert profile_for_class("9bts2s").area_names is True
+    for class_ in SUPPORTED_CLASSES:
+        if class_ != "9bts2s":
+            assert profile_for_class(class_).area_names is False
+
+
 def test_profile_flags_default_to_off() -> None:
     """A newly supported class is patched without claiming any capability."""
     profile = MowerProfile("new000")
 
     assert profile.area_parameters is False
+    assert profile.area_names is False
     assert profile.zone_mowing is False
     assert profile.border_mowing is False

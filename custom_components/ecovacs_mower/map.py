@@ -19,17 +19,30 @@ class MowerMap:
     """Latest known map geometry and position for one device."""
 
     def __init__(self) -> None:
-        self.boundary: Polygon | None = None
+        # One outline per mowed area: a multi-area map has one per
+        # lawn, every other mower exactly one.
+        self.boundaries: list[Polygon] = []
         self.zones: list[Polygon] = []
+        self.flush_edges: list[Polygon] = []
+        # The passages joining two areas, from onMI. Open paths, not
+        # rings, like the flush edges above.
         self.corridors: list[Polygon] = []
+        # Each area's name at the point the mower itself puts it, from
+        # getAreaSet. Ordered by area id so the rendering is stable.
+        self.labels: list[tuple[Point, str]] = []
         self.obstacles: list[Polygon] = []
         self.nogo_zones: list[Polygon] = []
-        self.lanes: dict[tuple[str, int], list[Segment]] = {}
+        # The lanes of the current job that the mower has not reached
+        # yet, keyed (zone, row) — what is left to cut, not what is
+        # cut. See MapTrack in deebot_patch/geometry.py.
+        self.remaining: dict[tuple[str, int], list[Segment]] = {}
         # Firmware 1.17 reports coverage as outlines with holes instead of
         # lanes. A device speaks one dialect, so only one of the two is
         # ever populated.
         self.covered: list[Polygon] = []
         self.covered_holes: list[Polygon] = []
+        # Kept and published as an entity attribute, but not drawn: see
+        # the note in map_svg.py.
         self.track: list[Point] = []
         self.position: Point | None = None
         self.heading: int = 0
@@ -46,28 +59,36 @@ class MowerMap:
     def is_empty(self) -> bool:
         """True when there is no geometry worth rendering."""
         return (
-            self.boundary is None
+            not self.boundaries
             and not self.zones
-            and not self.lanes
+            and not self.remaining
             and not self.covered
             and not self.nogo_zones
             and not self.obstacles
+            and not self.flush_edges
             and not self.corridors
         )
 
     def update_map_info(
         self,
-        boundary: Polygon | None,
+        boundaries: list[Polygon] | None,
         zones: list[Polygon] | None,
-        corridors: list[Polygon] | None,
+        flush_edges: list[Polygon] | None,
+        corridors: list[Polygon] | None = None,
     ) -> None:
         """Merge static geometry; None means "unchanged"."""
-        if boundary is not None:
-            self.boundary = boundary
+        if boundaries is not None:
+            self.boundaries = boundaries
         if zones is not None:
             self.zones = zones
+        if flush_edges is not None:
+            self.flush_edges = flush_edges
         if corridors is not None:
             self.corridors = corridors
+
+    def update_labels(self, labels: list[tuple[Point, str]]) -> None:
+        """Replace the area labels (the inventory is a complete set)."""
+        self.labels = labels
 
     def update_obstacles(self, obstacles: list[Polygon]) -> None:
         """Replace the obstacle set (events carry the complete set)."""
@@ -77,11 +98,21 @@ class MowerMap:
         """Replace the no-go zones (events carry the complete set)."""
         self.nogo_zones = zones
 
-    def update_coverage(
-        self, lanes: dict[tuple[str, int], list[Segment]]
+    def update_remaining(
+        self,
+        rows: dict[tuple[str, int], list[Segment]],
+        complete: bool = False,
     ) -> None:
-        """Merge lane rows; a resent row replaces its previous extent."""
-        self.lanes.update(lanes)
+        """Take a full plan whole, or merge a single reported row.
+
+        A row shrinks as the mower works along it, and a finished one
+        is dropped from the next full plan rather than reported empty —
+        so merging a full plan would keep every finished row for ever.
+        """
+        if complete:
+            self.remaining = dict(rows)
+        else:
+            self.remaining.update(rows)
 
     def update_covered(
         self, areas: list[Polygon], holes: list[Polygon]
@@ -120,14 +151,19 @@ class MowerMap:
     def as_dict(self) -> dict[str, Any]:
         """Serializable snapshot for Store. Track/position stay volatile."""
         return {
-            "boundary": self.boundary,
+            "boundaries": self.boundaries,
             "zones": self.zones,
+            "flush_edges": self.flush_edges,
             "corridors": self.corridors,
+            "labels": [[list(point), name] for point, name in self.labels],
             "obstacles": self.obstacles,
             "nogo_zones": self.nogo_zones,
+            # Stored under the old key: the content never changed, only
+            # the understanding of it, so a snapshot written before this
+            # reads back correctly and the store version can stay at 1.
             "lanes": [
                 [zone, row, segments]
-                for (zone, row), segments in self.lanes.items()
+                for (zone, row), segments in self.remaining.items()
             ],
             "covered": self.covered,
             "covered_holes": self.covered_holes,
@@ -141,10 +177,32 @@ class MowerMap:
             return [(int(p[0]), int(p[1])) for p in points]
 
         mower_map = cls()
-        if data.get("boundary"):
-            mower_map.boundary = polygon(data["boundary"])
+        if data.get("boundaries"):
+            mower_map.boundaries = [
+                polygon(points) for points in data["boundaries"]
+            ]
+        elif data.get("boundary"):
+            # A snapshot written before a map could hold more than one
+            # outline. The store version is deliberately not bumped for
+            # this: Store.async_load raises NotImplementedError for a
+            # version it has no migration hook for, and one outline needs
+            # nothing but wrapping.
+            mower_map.boundaries = [polygon(data["boundary"])]
         mower_map.zones = [polygon(p) for p in data.get("zones", [])]
-        mower_map.corridors = [polygon(p) for p in data.get("corridors", [])]
+        # "corridors" is what section 6 was called before it was named
+        # for the flush-mow edges it holds, and is what older snapshots
+        # store it under. In one of those the key is the flush edges and
+        # there are no passages; in a current one the two are separate.
+        legacy = "flush_edges" not in data
+        mower_map.flush_edges = [
+            polygon(p)
+            for p in (data.get("corridors") if legacy else data["flush_edges"])
+            or []
+        ]
+        if not legacy:
+            mower_map.corridors = [
+                polygon(p) for p in data.get("corridors", [])
+            ]
         mower_map.obstacles = [polygon(p) for p in data.get("obstacles", [])]
         mower_map.nogo_zones = [
             polygon(p) for p in data.get("nogo_zones", [])
@@ -153,7 +211,11 @@ class MowerMap:
         mower_map.covered_holes = [
             polygon(p) for p in data.get("covered_holes", [])
         ]
-        mower_map.lanes = {
+        mower_map.labels = [
+            ((int(point[0]), int(point[1])), str(name))
+            for point, name in data.get("labels", [])
+        ]
+        mower_map.remaining = {
             (str(zone), int(row)): [
                 ((int(a[0]), int(a[1])), (int(b[0]), int(b[1])))
                 for a, b in segments

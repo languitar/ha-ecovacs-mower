@@ -63,10 +63,11 @@ from .deebot_patch import (
     register_mower_bus,
     verify_capabilities,
 )
-from .deebot_patch.commands import GetPosMower
+from .deebot_patch.areas import MowerAreaEvent
+from .deebot_patch.commands import GetMapTrack, GetPosMower
 from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
 from .deebot_patch.map_messages import (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -297,7 +298,22 @@ class EcovacsController:
 
         async def on_map_info(event: MowerMapInfoEvent) -> None:
             mower_map.update_map_info(
-                event.boundary, event.zones, event.corridors
+                event.boundaries,
+                event.zones,
+                event.flush_edges,
+                event.corridors,
+            )
+            save()
+
+        async def on_areas(event: MowerAreaEvent) -> None:
+            # Only the areas the mower gave both a name and a point for:
+            # a label without either has nothing to draw.
+            mower_map.update_labels(
+                [
+                    (area.label, area.name)
+                    for area in sorted(event.areas, key=lambda a: a.area_id)
+                    if area.label is not None and area.name
+                ]
             )
             save()
 
@@ -305,8 +321,8 @@ class EcovacsController:
             mower_map.update_obstacles(event.obstacles)
             save()
 
-        async def on_coverage(event: MowerCoverageEvent) -> None:
-            mower_map.update_coverage(event.lanes)
+        async def on_remaining(event: MowerRemainingEvent) -> None:
+            mower_map.update_remaining(event.rows, event.complete)
             save()
 
         async def on_covered(event: MowerCoveredAreaEvent) -> None:
@@ -332,9 +348,10 @@ class EcovacsController:
 
         device.events.subscribe(MowerMapInfoEvent, on_map_info)
         device.events.subscribe(MowerObstaclesEvent, on_obstacles)
-        device.events.subscribe(MowerCoverageEvent, on_coverage)
+        device.events.subscribe(MowerRemainingEvent, on_remaining)
         device.events.subscribe(MowerCoveredAreaEvent, on_covered)
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
+        device.events.subscribe(MowerAreaEvent, on_areas)
         device.events.subscribe(PositionsEvent, on_positions)
 
     def _setup_fault_latch(self, device: Device) -> None:
@@ -403,10 +420,17 @@ class EcovacsController:
         G1-800 never push onPos, and deebot-client defines no map capability
         for that class to refresh through the event bus. The tick only runs
         while the mower is out, so a parked mower is never asked.
+
+        So is what is left to mow, and for a sharper reason: the mower
+        pushes that one row at a time as it works, and sends the whole
+        plan only when asked. Without this a listener holds the row
+        under the mower and whatever the phone's last visit happened to
+        broadcast — see GetMapTrack.
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)
         await device.execute_command(GetPosMower())
+        await device.execute_command(GetMapTrack())
 
     async def teardown(self) -> None:
         """Disconnect controller."""

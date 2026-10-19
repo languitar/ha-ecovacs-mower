@@ -50,11 +50,16 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MowerMapInfoEvent(Event):
-    """Static map geometry. None fields mean "unchanged", never "empty"."""
+    """Static map geometry. None fields mean "unchanged", never "empty".
 
-    boundary: Polygon | None
+    ``boundaries`` is one lawn outline per mowed area; all but a
+    multi-area chain-dialect ``onArI`` report exactly one.
+    """
+
+    boundaries: list[Polygon] | None
     zones: list[Polygon] | None
-    corridors: list[Polygon] | None
+    flush_edges: list[Polygon] | None
+    corridors: list[Polygon] | None = None
 
 
 @dataclass(frozen=True)
@@ -65,10 +70,20 @@ class MowerObstaclesEvent(Event):
 
 
 @dataclass(frozen=True)
-class MowerCoverageEvent(Event):
-    """Mowed lane spans keyed (zone, row); an empty list clears the row."""
+class MowerRemainingEvent(Event):
+    """The lanes still to mow, keyed (zone, row).
 
-    lanes: dict[tuple[str, int], list[Segment]]
+    Not coverage: see ``MapTrack``. An empty list is a row with nothing
+    left in it.
+
+    ``complete`` is the whole remaining plan, in answer to
+    ``GetMapTrack``: it is the entire truth and anything not in it is
+    finished. Otherwise this is the single row the mower is working on,
+    pushed as it goes, and only that row changes.
+    """
+
+    rows: dict[tuple[str, int], list[Segment]]
+    complete: bool = False
 
 
 @dataclass(frozen=True)
@@ -162,11 +177,14 @@ class OnMI(_MapMessage):
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         map_info = parse_map_info(blob)
-        if map_info.boundary is None:
+        if map_info.boundaries is None and map_info.corridors is None:
             return HandlingResult.success()  # idle snapshot, nothing new
         event_bus.notify(
             MowerMapInfoEvent(
-                boundary=map_info.boundary, zones=None, corridors=None
+                boundaries=map_info.boundaries,
+                zones=None,
+                flush_edges=None,
+                corridors=map_info.corridors,
             )
         )
         return HandlingResult.success()
@@ -214,8 +232,8 @@ class OnMapInfo(OnMI):
 
 
 class OnArI(_MapMessage):
-    """Area info: zones, obstacles, boundary, corridors — plus no-go zones
-    from firmware 1.17 on.
+    """Area info: zones, obstacles, outlines, flush-mow edges — plus
+    no-go zones from firmware 1.17 on.
     """
 
     NAME = "onArI"
@@ -225,36 +243,46 @@ class OnArI(_MapMessage):
         area = parse_area_info(blob)
         map_info = area.map_info
         if (
-            map_info.boundary is not None
+            map_info.boundaries is not None
             or map_info.zones is not None
-            or map_info.corridors is not None
+            or map_info.flush_edges is not None
         ):
             event_bus.notify(
                 MowerMapInfoEvent(
-                    boundary=map_info.boundary,
+                    boundaries=map_info.boundaries,
                     zones=map_info.zones,
-                    corridors=map_info.corridors,
+                    flush_edges=map_info.flush_edges,
                 )
             )
         if area.obstacles is not None:
             event_bus.notify(MowerObstaclesEvent(obstacles=area.obstacles))
         if area.nogo is not None:
-            # 1.17 only: up to 1.13 the no-go zones come in their own
-            # onSpecialContour message and this stays None.
+            # Section 2, in both dialects. A mower that reports its no-go
+            # zones here outranks onSpecialContour, which carries them too
+            # up to firmware 1.13 — see MowerStateRecord.note_area_nogo.
+            if (record := record_for(event_bus)) is not None:
+                record.note_area_nogo()
             event_bus.notify(MowerNoGoZonesEvent(zones=area.nogo))
         return HandlingResult.success()
 
 
 class OnMapTrack(_MapMessage):
-    """Coverage: mowed lane spans per 100 mm row."""
+    """What is still to mow, as lane stretches per 100 mm row."""
 
     NAME = "onMapTrack"
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         track = parse_map_track(blob)
-        if track.lanes:
-            event_bus.notify(MowerCoverageEvent(lanes=track.lanes))
+        # An empty full snapshot is the most informative blob there is:
+        # it says the job is finished. Only an empty incremental one has
+        # nothing in it.
+        if track.remaining or track.full:
+            event_bus.notify(
+                MowerRemainingEvent(
+                    rows=track.remaining, complete=track.full
+                )
+            )
         return HandlingResult.success()
 
 
@@ -279,7 +307,11 @@ class OnSpecialContour(_MapMessage):
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
-        event_bus.notify(
-            MowerNoGoZonesEvent(zones=parse_special_contour(blob))
-        )
+        record = record_for(event_bus)
+        if record is not None and record.area_nogo:
+            return HandlingResult.success()  # onArI owns them here
+        zones = parse_special_contour(blob)
+        if zones is None:
+            return HandlingResult.analyse()  # nothing readable in it
+        event_bus.notify(MowerNoGoZonesEvent(zones=zones))
         return HandlingResult.success()
