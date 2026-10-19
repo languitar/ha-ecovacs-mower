@@ -170,6 +170,7 @@ class MapTrack:
     """
 
     remaining: dict[tuple[str, int], list[Segment]]
+    full: bool
 
 
 @dataclass(frozen=True)
@@ -484,12 +485,24 @@ def parse_map_track(blob: bytes) -> MapTrack:
     share a y — the mower lays its lanes at the configured cutting
     direction, so a span can run at any angle.
 
-    A record without coordinates is a row with nothing left in it.
-    Perimeter-trace records (kind 2) are ignored — one point each, and
-    not part of the plan.
+    A record without coordinates is a row with nothing left in it, and a
+    row the mower has finished is simply absent from the next snapshot —
+    which is why ``full`` matters. ``entry[1]`` says which kind of blob
+    this is: ``"1"`` is the whole remaining plan, as sent in answer to
+    ``getMapTrack``, and ``"2"`` is the single row the mower is working
+    on, pushed as it goes. A full blob replaces the stored set; an
+    incremental one merges into it. Merging a full one instead leaves
+    every finished row in place for ever — on a real map that grew the
+    stored plan to 266 stretches against the mower's own 114.
+
+    Perimeter-trace records (kind 2 in ``fields[1]``, not to be confused
+    with the blob kind above) are ignored — one point each, and not part
+    of the plan.
     """
     rows: dict[tuple[str, int], list[Segment]] = {}
+    full = False
     for entry in json.loads(blob):
+        full = full or (len(entry) > 1 and entry[1] == "1")
         for record in entry[2:]:
             fields = record.split(";")
             if len(fields) < 3 or fields[1] != "1":
@@ -502,7 +515,7 @@ def parse_map_track(blob: bytes) -> MapTrack:
             rows[(fields[0], int(fields[2]))] = list(
                 zip(points[::2], points[1::2])
             )
-    return MapTrack(remaining=rows)
+    return MapTrack(remaining=rows, full=full)
 
 
 def parse_map_trace(blob: bytes) -> CoveredArea:
