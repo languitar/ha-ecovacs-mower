@@ -4,6 +4,11 @@ Pure Python, stdlib only. The output is served by the image entity as
 image/svg+xml; layer classes exist for the tests, styling is inline. The
 coordinate system is the mower's own map frame in mm (dock at origin);
 the y axis is flipped because SVG grows downwards.
+
+The driven path is deliberately not a layer here. ``MowerMap`` still
+keeps it and the image entity still publishes it as an attribute, for a
+card that wants to draw it; what it is not is something this renderer
+can show honestly. See ``MowerMap.track``.
 """
 
 from __future__ import annotations
@@ -36,7 +41,6 @@ _LABEL = "#e6f0e8"
 _NOGO_FILL = "#8f3a3a"
 _NOGO_EDGE = "#e07a7a"
 _OBSTACLE = "#c86a2e"
-_TRACK = "#e8e16a"
 _MOWER = "#ffe93d"
 _DOCK = "#5aa0c8"
 
@@ -53,8 +57,7 @@ def render(mower_map: MowerMap) -> str:
     if mower_map.is_empty:
         return _PLACEHOLDER
 
-    points: list[Point] = list(mower_map.track)
-    points.append(mower_map.dock)
+    points: list[Point] = [mower_map.dock]
     for polygon in (
         mower_map.boundaries
         + mower_map.zones
@@ -152,12 +155,6 @@ def render(mower_map: MowerMap) -> str:
             f'<text class="label" x="{label_x:.1f}" y="{label_y:.1f}" '
             f'fill="{_LABEL}" font-family="sans-serif" font-size="11" '
             f'text-anchor="middle">{escape(name)}</text>'
-        )
-    if len(mower_map.track) >= 1:
-        parts.append(
-            f'<path class="track" '
-            f'd="{path(mower_map.track, close=False)}" fill="none" '
-            f'stroke="{_TRACK}" stroke-width="1.2" opacity="0.9"/>'
         )
 
     dock_x, dock_y = (v for v in xy(mower_map.dock).split(","))

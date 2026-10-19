@@ -24,6 +24,7 @@ def _populated_map() -> MowerMap:
     mower_map.update_coverage({("1", 5): [((500, 0), (500, 9000))]})
     mower_map.update_labels([((2000, 2000), "Hinten & <Vorgarten>")])
     mower_map.update_position(1000, 2000, 90)
+    mower_map.update_position(1000, 2160, 90)
     return mower_map
 
 
@@ -110,7 +111,7 @@ def test_populated_map_renders_all_layers() -> None:
     assert 'class="nogo"' in svg
     assert 'class="obstacle"' in svg
     assert 'class="zone"' in svg
-    assert 'class="track"' in svg
+    assert 'class="track"' not in svg  # the driven path is not a layer
     assert 'class="dock"' in svg
     assert 'class="mower"' in svg
 

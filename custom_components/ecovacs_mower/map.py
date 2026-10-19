@@ -38,6 +38,8 @@ class MowerMap:
         # ever populated.
         self.covered: list[Polygon] = []
         self.covered_holes: list[Polygon] = []
+        # Kept and published as an entity attribute, but not drawn: see
+        # the note in map_svg.py.
         self.track: list[Point] = []
         self.position: Point | None = None
         self.heading: int = 0
