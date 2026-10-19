@@ -18,9 +18,17 @@ _SCALE = 0.02  # px per mm — a 30 m lawn becomes ~600 px
 _MARGIN_MM = 500
 
 _BACKGROUND = "#1c2620"
-_LAWN_FILL = "#2e5d34"
-_LAWN_EDGE = "#7fd68a"
-_LANE = "#4a8f52"
+# The two greens carry the one thing a glance at the map should answer:
+# what is still to cut. Grass the mower has not covered keeps the dark
+# fill, coverage is drawn over it in the light one, and the gap between
+# them is wide enough to read at a dashboard's size. They used to be
+# #2e5d34 and #4a8f52 — a quarter of a step apart in lightness, which on
+# a real 427 m2 map left a finished lawn and an untouched one looking
+# like the same green. The outline sits lighter than both so it stays a
+# boundary over either.
+_LAWN_FILL = "#24402b"
+_LAWN_EDGE = "#cdf0d4"
+_LANE = "#7ecb87"
 _ZONE = "#c9a94e"
 _FLUSH_EDGE = "#5aa0c8"
 _CORRIDOR = "#8f7fd6"
