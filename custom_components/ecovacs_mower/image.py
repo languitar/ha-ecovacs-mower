@@ -29,7 +29,7 @@ from homeassistant.util import dt as dt_util
 from . import EcovacsMowerConfigEntry
 from .deebot_patch.commands import GetPosMower
 from .deebot_patch.map_messages import (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -107,7 +107,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
 
         self._subscribe(MowerMapInfoEvent, self._on_geometry)
         self._subscribe(MowerObstaclesEvent, self._on_geometry)
-        self._subscribe(MowerCoverageEvent, self._on_geometry)
+        self._subscribe(MowerRemainingEvent, self._on_geometry)
         self._subscribe(MowerCoveredAreaEvent, self._on_geometry)
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
@@ -152,6 +152,17 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         automation that calls it every few seconds while the mower is out,
         and nobody else pays for the commands. The answer arrives as a
         PositionsEvent, like a pushed position.
+
+        What is left to mow is not asked for here. The mower answers
+        getMapTrack only while there is a job to report on: docked with
+        nothing running it refuses the request outright, code 10000
+        "getMapTrack fail", with or without the body the app sends —
+        measured on an O800 RTK (9bts2s, fw 1.13.8) charging in its dock,
+        three times over two runs three minutes apart. So the one moment
+        this refresh would be worth paying for buys nothing, and during a
+        job it would put the whole 6.7 KB plan on a call an automation
+        makes every few seconds. The five-minute tick asks instead, which
+        only runs while the mower is out: see controller._poll.
         """
         await self._execute_command(GetPosMower())
 
@@ -166,7 +177,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self,
         event: MowerMapInfoEvent
         | MowerObstaclesEvent
-        | MowerCoverageEvent
+        | MowerRemainingEvent
         | MowerCoveredAreaEvent
         | MowerNoGoZonesEvent,
     ) -> None:

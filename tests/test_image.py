@@ -327,6 +327,10 @@ async def test_update_entity_asks_the_mower_where_it_is() -> None:
     # automation calls it as often as it likes while the mower is out. It goes
     # through the entity's wrapper so an unconfirmed command is logged under
     # this integration's logger (issue #26).
+    #
+    # One command, not two: the whole plan is deliberately not asked for
+    # here, because a docked mower refuses getMapTrack and a few-second
+    # refresh is the wrong place for 6.7 KB. async_update says why.
     from unittest.mock import AsyncMock
 
     from custom_components.ecovacs_mower.deebot_patch.commands import GetPosMower

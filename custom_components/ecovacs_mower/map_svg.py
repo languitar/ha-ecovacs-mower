@@ -23,17 +23,21 @@ _SCALE = 0.02  # px per mm — a 30 m lawn becomes ~600 px
 _MARGIN_MM = 500
 
 _BACKGROUND = "#1c2620"
-# The two greens carry the one thing a glance at the map should answer:
-# what is still to cut. Grass the mower has not covered keeps the dark
-# fill, coverage is drawn over it in the light one, and the gap between
-# them is wide enough to read at a dashboard's size. They used to be
-# #2e5d34 and #4a8f52 — a quarter of a step apart in lightness, which on
-# a real 427 m2 map left a finished lawn and an untouched one looking
-# like the same green. The outline sits lighter than both so it stays a
-# boundary over either.
-_LAWN_FILL = "#24402b"
+# The lawn is one green, because the mower never says a lawn is mowed —
+# it says what is left of the job it is on. That is _UNCUT, drawn over
+# the lawn in the lighter, yellower green of grass still standing; where
+# it is absent the map is making no claim. Light over dark rather than
+# the other way round because the remaining lanes are thin and must
+# carry at a dashboard's size, and a lawn outside the current job gets
+# no lanes at all and must not read as finished.
+_LAWN_FILL = "#2c4a33"
 _LAWN_EDGE = "#cdf0d4"
-_LANE = "#7ecb87"
+_UNCUT = "#b7e26a"
+# The 1.17 onMapTrace layer is the other way round — its own docstring
+# reads section 1 as the outline of what HAS been mowed — so it keeps a
+# colour of its own until somebody checks that reading against hardware
+# the way onMapTrack has now been checked.
+_MOWED = "#7ecb87"
 _ZONE = "#c9a94e"
 _FLUSH_EDGE = "#5aa0c8"
 _CORRIDOR = "#8f7fd6"
@@ -68,7 +72,7 @@ def render(mower_map: MowerMap) -> str:
         + mower_map.covered
     ):
         points.extend(polygon)
-    for segments in mower_map.lanes.values():
+    for segments in mower_map.remaining.values():
         for start, end in segments:
             points.extend((start, end))
     if mower_map.position:
@@ -111,15 +115,17 @@ def render(mower_map: MowerMap) -> str:
             for polygon in mower_map.covered + mower_map.covered_holes
         )
         parts.append(
-            f'<path class="covered" d="{rings}" fill="{_LANE}" '
+            f'<path class="covered" d="{rings}" fill="{_MOWED}" '
             'fill-rule="evenodd" opacity="0.9"/>'
         )
-    for segments in mower_map.lanes.values():
+    for segments in mower_map.remaining.values():
         for start, end in segments:
+            # One row's width, so neighbouring rows meet and a block of
+            # them reads as an area rather than as hatching.
             parts.append(
-                f'<path class="lane" d="{path([start, end], close=False)}" '
-                f'stroke="{_LANE}" stroke-width="2" fill="none" '
-                'opacity="0.9"/>'
+                f'<path class="uncut" d="{path([start, end], close=False)}" '
+                f'stroke="{_UNCUT}" stroke-width="2" fill="none" '
+                'opacity="0.95"/>'
             )
     for polygon in mower_map.zones:
         parts.append(

@@ -32,7 +32,10 @@ class MowerMap:
         self.labels: list[tuple[Point, str]] = []
         self.obstacles: list[Polygon] = []
         self.nogo_zones: list[Polygon] = []
-        self.lanes: dict[tuple[str, int], list[Segment]] = {}
+        # The lanes of the current job that the mower has not reached
+        # yet, keyed (zone, row) — what is left to cut, not what is
+        # cut. See MapTrack in deebot_patch/geometry.py.
+        self.remaining: dict[tuple[str, int], list[Segment]] = {}
         # Firmware 1.17 reports coverage as outlines with holes instead of
         # lanes. A device speaks one dialect, so only one of the two is
         # ever populated.
@@ -58,7 +61,7 @@ class MowerMap:
         return (
             not self.boundaries
             and not self.zones
-            and not self.lanes
+            and not self.remaining
             and not self.covered
             and not self.nogo_zones
             and not self.obstacles
@@ -95,11 +98,15 @@ class MowerMap:
         """Replace the no-go zones (events carry the complete set)."""
         self.nogo_zones = zones
 
-    def update_coverage(
-        self, lanes: dict[tuple[str, int], list[Segment]]
+    def update_remaining(
+        self, rows: dict[tuple[str, int], list[Segment]]
     ) -> None:
-        """Merge lane rows; a resent row replaces its previous extent."""
-        self.lanes.update(lanes)
+        """Merge rows; a resent row replaces its previous extent.
+
+        Replacing is what the wire means: a row shrinks as the mower
+        works along it and is reported empty once finished.
+        """
+        self.remaining.update(rows)
 
     def update_covered(
         self, areas: list[Polygon], holes: list[Polygon]
@@ -145,9 +152,20 @@ class MowerMap:
             "labels": [[list(point), name] for point, name in self.labels],
             "obstacles": self.obstacles,
             "nogo_zones": self.nogo_zones,
-            "lanes": [
+            # A new key, because "lanes" holds something else: every
+            # onMapTrack row ever reported, merged forever under the old
+            # reading. Read back as the remaining plan that set would draw
+            # the whole season's mowing as still to cut, and stay that way
+            # until a full plan arrived — which needs the mower out and a
+            # poll tick. So a snapshot written before this contributes
+            # nothing and is ignored; the layer is empty until the next
+            # job, which is the honest version of not knowing. The store
+            # version stays at 1: Store.async_load raises
+            # NotImplementedError for a version with no migration hook,
+            # and dropping a key needs no migration.
+            "remaining": [
                 [zone, row, segments]
-                for (zone, row), segments in self.lanes.items()
+                for (zone, row), segments in self.remaining.items()
             ],
             "covered": self.covered,
             "covered_holes": self.covered_holes,
@@ -199,11 +217,12 @@ class MowerMap:
             ((int(point[0]), int(point[1])), str(name))
             for point, name in data.get("labels", [])
         ]
-        mower_map.lanes = {
+        # "lanes" is deliberately not read; see as_dict.
+        mower_map.remaining = {
             (str(zone), int(row)): [
                 ((int(a[0]), int(a[1])), (int(b[0]), int(b[1])))
                 for a, b in segments
             ]
-            for zone, row, segments in data.get("lanes", [])
+            for zone, row, segments in data.get("remaining", [])
         }
         return mower_map

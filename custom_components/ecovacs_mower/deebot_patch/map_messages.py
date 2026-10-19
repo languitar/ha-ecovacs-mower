@@ -72,10 +72,17 @@ class MowerObstaclesEvent(Event):
 
 
 @dataclass(frozen=True)
-class MowerCoverageEvent(Event):
-    """Mowed lane spans keyed (zone, row); an empty list clears the row."""
+class MowerRemainingEvent(Event):
+    """The lanes still to mow, keyed (zone, row).
 
-    lanes: dict[tuple[str, int], list[Segment]]
+    Not coverage: see ``MapTrack``. An empty list is a row with nothing
+    left in it. A blob carries either the whole plan, in answer to
+    ``GetMapTrack``, or the single row under the mower, pushed as it
+    works — so the rows named here replace their stored selves and the
+    rest stand.
+    """
+
+    rows: dict[tuple[str, int], list[Segment]]
 
 
 @dataclass(frozen=True)
@@ -258,15 +265,15 @@ class OnArI(_MapMessage):
 
 
 class OnMapTrack(_MapMessage):
-    """Coverage: mowed lane spans per 100 mm row."""
+    """What is still to mow, as lane stretches per 100 mm row."""
 
     NAME = "onMapTrack"
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         track = parse_map_track(blob)
-        if track.lanes:
-            event_bus.notify(MowerCoverageEvent(lanes=track.lanes))
+        if track.remaining:
+            event_bus.notify(MowerRemainingEvent(rows=track.remaining))
         return HandlingResult.success()
 
 
