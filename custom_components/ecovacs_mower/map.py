@@ -99,14 +99,20 @@ class MowerMap:
         self.nogo_zones = zones
 
     def update_remaining(
-        self, rows: dict[tuple[str, int], list[Segment]]
+        self,
+        rows: dict[tuple[str, int], list[Segment]],
+        complete: bool = False,
     ) -> None:
-        """Merge rows; a resent row replaces its previous extent.
+        """Take a full plan whole, or merge a single reported row.
 
-        Replacing is what the wire means: a row shrinks as the mower
-        works along it and is reported empty once finished.
+        A row shrinks as the mower works along it, and a finished one
+        is dropped from the next full plan rather than reported empty —
+        so merging a full plan would keep every finished row for ever.
         """
-        self.remaining.update(rows)
+        if complete:
+            self.remaining = dict(rows)
+        else:
+            self.remaining.update(rows)
 
     def update_covered(
         self, areas: list[Polygon], holes: list[Polygon]

@@ -322,7 +322,7 @@ class EcovacsController:
             save()
 
         async def on_remaining(event: MowerRemainingEvent) -> None:
-            mower_map.update_remaining(event.rows)
+            mower_map.update_remaining(event.rows, event.complete)
             save()
 
         async def on_covered(event: MowerCoveredAreaEvent) -> None:
