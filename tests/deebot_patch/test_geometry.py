@@ -244,13 +244,13 @@ def test_parse_area_info_chain_reads_section_2_as_nogo_zones() -> None:
 
 def test_parse_map_track_single_lane() -> None:
     track = parse_map_track(_blob("on_map_track_single_lane"))
-    assert track.lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+    assert track.remaining == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
 
 
 def test_parse_map_track_bare_record_clears_the_row() -> None:
     track = parse_map_track(_blob("on_map_track_multipart"))
-    assert track.lanes[("1", 36)] == []  # record "1;1;36" — no coordinates
-    assert track.lanes[("1", 41)] == [
+    assert track.remaining[("1", 36)] == []  # record "1;1;36" — no coordinates
+    assert track.remaining[("1", 41)] == [
         ((-30850, 4025), (-28000, 4025))
     ]
 

@@ -8,8 +8,8 @@ import pytest
 
 from custom_components.ecovacs_mower.map import MowerMap
 from custom_components.ecovacs_mower.map_svg import (
-    _LANE,
     _LAWN_FILL,
+    _UNCUT,
     render,
 )
 
@@ -21,7 +21,7 @@ def _populated_map() -> MowerMap:
     mower_map.update_map_info([BOUNDARY], [[(1, 1), (2, 2), (3, 1)]], [])
     mower_map.update_nogo([[(100, 100), (200, 100), (200, 200)]])
     mower_map.update_obstacles([[(300, 300), (400, 300), (400, 400)]])
-    mower_map.update_coverage({("1", 5): [((500, 0), (500, 9000))]})
+    mower_map.update_remaining({("1", 5): [((500, 0), (500, 9000))]})
     mower_map.update_labels([((2000, 2000), "Hinten & <Vorgarten>")])
     mower_map.update_position(1000, 2000, 90)
     mower_map.update_position(1000, 2160, 90)
@@ -72,7 +72,7 @@ def test_area_labels_are_drawn_where_the_mower_puts_them() -> None:
     assert label.group(1) == "Vorgarten &amp; &lt;Hinten&gt;"
 
 
-def test_mowed_grass_reads_as_lighter_than_grass_still_to_cut() -> None:
+def test_grass_still_to_cut_reads_as_lighter_than_the_lawn() -> None:
     """What is left to mow is the one thing a glance should answer.
 
     The two greens were a quarter of a step apart in lightness once,
@@ -91,9 +91,9 @@ def test_mowed_grass_reads_as_lighter_than_grass_still_to_cut() -> None:
             0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
         )
 
-    mowed, uncut = luminance(_LANE), luminance(_LAWN_FILL)
-    assert mowed > uncut
-    assert (mowed + 0.05) / (uncut + 0.05) >= 3
+    uncut, lawn = luminance(_UNCUT), luminance(_LAWN_FILL)
+    assert uncut > lawn
+    assert (uncut + 0.05) / (lawn + 0.05) >= 3
 
 
 def test_empty_map_renders_placeholder() -> None:
@@ -107,7 +107,7 @@ def test_populated_map_renders_all_layers() -> None:
     assert svg.startswith("<svg")
     assert "No map data yet" not in svg
     assert 'class="boundary"' in svg
-    assert 'class="lane"' in svg
+    assert 'class="uncut"' in svg
     assert 'class="nogo"' in svg
     assert 'class="obstacle"' in svg
     assert 'class="zone"' in svg

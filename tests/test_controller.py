@@ -637,8 +637,29 @@ async def test_poll_asks_the_mower_where_it_is() -> None:
 
     await controller._poll(device, None)
 
-    device.execute_command.assert_awaited_once()
-    assert isinstance(device.execute_command.await_args.args[0], GetPosMower)
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert any(isinstance(command, GetPosMower) for command in sent)
+
+
+async def test_poll_asks_for_the_whole_of_what_is_left_to_mow() -> None:
+    # The mower pushes onMapTrack one row at a time while it works and
+    # sends the whole plan only in answer to getMapTrack. A listener that
+    # never asks holds the row under the mower and nothing else.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert any(isinstance(command, GetMapTrack) for command in sent)
 
 
 async def test_teardown_cancels_outstanding_polls() -> None:
@@ -692,7 +713,7 @@ async def test_setup_map_restores_persisted_geometry() -> None:
 
     mower_map = controller.maps["did-1"]
     assert mower_map.boundaries == [[(0, 0), (100, 0), (100, 100)]]
-    assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
+    assert mower_map.remaining == {("1", 5): [((0, 0), (0, 100))]}
     # Eager subscriptions: 5 map events, MowerAreaEvent for the labels,
     # and PositionsEvent. EventBus.notify drops events nobody subscribes
     # to, so waiting for the entity to subscribe would lose data.
@@ -780,6 +801,43 @@ async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
     mower_map = controller.maps["did-1"]
     assert mower_map.covered == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.covered_holes == [[(10, 10)]]
+    store_cls.return_value.async_delay_save.assert_called_once()
+
+
+async def test_setup_map_feeds_what_is_left_to_mow_into_the_map() -> None:
+    """The onMapTrack rows reach the map and get persisted."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerRemainingEvent,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1"}
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
+        event_type, callback
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=None)
+        await controller._setup_map(device)
+
+        await callbacks[MowerRemainingEvent](
+            MowerRemainingEvent(rows={("1", 7): [((0, 0), (900, 0))]})
+        )
+
+    assert controller.maps["did-1"].remaining == {
+        ("1", 7): [((0, 0), (900, 0))]
+    }
     store_cls.return_value.async_delay_save.assert_called_once()
 
 

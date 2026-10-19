@@ -13,7 +13,7 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -32,7 +32,7 @@ FIXTURES: dict[str, list[Any]] = json.loads(
 
 
 _MAP_EVENTS = (
-    MowerCoverageEvent,
+    MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
     MowerNoGoZonesEvent,
@@ -109,11 +109,11 @@ def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
     assert len(events[0].obstacles) == 14
 
 
-def test_on_map_track_notifies_coverage() -> None:
+def test_on_map_track_notifies_the_rows_still_to_mow() -> None:
     events = _notified(OnMapTrack, "on_map_track_single_lane")
     assert len(events) == 1
-    assert isinstance(events[0], MowerCoverageEvent)
-    assert events[0].lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+    assert isinstance(events[0], MowerRemainingEvent)
+    assert events[0].rows == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
 
 
 def test_on_special_contour_notifies_nogo_zones() -> None:

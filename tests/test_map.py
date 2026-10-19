@@ -18,11 +18,11 @@ def test_none_fields_leave_previous_values_untouched() -> None:
 
 def test_coverage_merges_per_row() -> None:
     mower_map = MowerMap()
-    mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
-    mower_map.update_coverage({("1", 6): [((100, 0), (100, 100))]})
+    mower_map.update_remaining({("1", 5): [((0, 0), (0, 100))]})
+    mower_map.update_remaining({("1", 6): [((100, 0), (100, 100))]})
     # Resent row replaces its previous extent.
-    mower_map.update_coverage({("1", 5): [((0, 0), (0, 500))]})
-    assert mower_map.lanes == {
+    mower_map.update_remaining({("1", 5): [((0, 0), (0, 500))]})
+    assert mower_map.remaining == {
         ("1", 5): [((0, 0), (0, 500))],
         ("1", 6): [((100, 0), (100, 100))],
     }
@@ -55,7 +55,7 @@ def test_round_trip_through_dict() -> None:
     )
     mower_map.update_obstacles([[(5, 6)]])
     mower_map.update_nogo([[(7, 8)]])
-    mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
+    mower_map.update_remaining({("1", 5): [((0, 0), (0, 100))]})
     mower_map.update_labels([((11, 12), "Hinten")])
     mower_map.update_position(1, 2, 3)
 
@@ -70,7 +70,7 @@ def test_round_trip_through_dict() -> None:
     assert restored.corridors == [[(9, 9), (9, 19)]]
     assert restored.obstacles == [[(5, 6)]]
     assert restored.nogo_zones == [[(7, 8)]]
-    assert restored.lanes == {("1", 5): [((0, 0), (0, 100))]}
+    assert restored.remaining == {("1", 5): [((0, 0), (0, 100))]}
     assert restored.labels == [((11, 12), "Hinten")]
     # Track and position are deliberately not persisted.
     assert restored.track == [] and restored.position is None

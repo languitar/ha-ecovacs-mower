@@ -153,9 +153,22 @@ class AreaInfo:
 
 @dataclass(frozen=True)
 class MapTrack:
-    """Decoded onMapTrack coverage. An empty segment list clears the row."""
+    """Decoded onMapTrack: the rows still to mow, not the ones mowed.
 
-    lanes: dict[tuple[str, int], list[Segment]]
+    Each row is a lane of the current job's plan, 100 mm from the next,
+    and its segments are the stretches of that lane the mower has not
+    reached yet. Captured on an O800 RTK (``9bts2s``, fw 1.13.8) while a
+    job ran: one row's remaining length fell 10.25 m -> 0.00 m over 70
+    seconds at 0.33 m/s — mowing speed — and the row then vanished from
+    the next snapshot. Across the same capture 1 row finished and was
+    dropped, 1 shrank and none appeared, and the whole-map total only
+    ever fell, 809.6 m -> 742.1 m. Coverage can only grow, so this is
+    its complement.
+
+    An empty segment list is a row with nothing left in it.
+    """
+
+    remaining: dict[tuple[str, int], list[Segment]]
 
 
 @dataclass(frozen=True)
@@ -430,12 +443,20 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
 def parse_map_track(blob: bytes) -> MapTrack:
     """Parse onMapTrack lane records: ``<zone>;1;<row>[;x,y;x,y…]``.
 
-    Coordinate pairs are mowed spans on a 100 mm row; a record without
-    coordinates clears the row. Perimeter-trace records (kind 2) are
-    ignored — the live position track covers that visual, and rendering
-    them is not in scope (see spec, "layers").
+    The coordinates come in pairs, each the two ends of a stretch of that
+    row still to mow — see ``MapTrack`` for why "still to mow" rather
+    than "mowed". Point counts are always even: over one 247-record
+    snapshot, 172 records carried 2 points, 52 carried 4, 9 carried 6 and
+    5 carried 8, which is a row crossed by an obstacle reported as two or
+    more stretches. Rows are 100 mm apart, and a row's two ends need not
+    share a y — the mower lays its lanes at the configured cutting
+    direction, so a span can run at any angle.
+
+    A record without coordinates is a row with nothing left in it.
+    Perimeter-trace records (kind 2) are ignored — one point each, and
+    not part of the plan.
     """
-    lanes: dict[tuple[str, int], list[Segment]] = {}
+    rows: dict[tuple[str, int], list[Segment]] = {}
     for entry in json.loads(blob):
         for record in entry[2:]:
             fields = record.split(";")
@@ -446,10 +467,10 @@ def parse_map_track(blob: bytes) -> MapTrack:
                 for part in fields[3:]
                 if "," in part
             ]
-            lanes[(fields[0], int(fields[2]))] = list(
+            rows[(fields[0], int(fields[2]))] = list(
                 zip(points[::2], points[1::2])
             )
-    return MapTrack(lanes=lanes)
+    return MapTrack(remaining=rows)
 
 
 def parse_map_trace(blob: bytes) -> CoveredArea:
