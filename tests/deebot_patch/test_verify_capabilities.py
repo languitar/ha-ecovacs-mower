@@ -15,7 +15,10 @@ from custom_components.ecovacs_mower.deebot_patch.hardware import (
 )
 from custom_components.ecovacs_mower.deebot_patch.zonal import MowArea
 
-O800 = "9bts2s"
+# A supported class whose profile leaves zone mowing off, so the two tests
+# below can turn it on and watch the gate react. It is the O800 RTK's second
+# class string, the same hardware as the zone-confirmed 9bts2s.
+NO_ZONE = "2px96q"
 A1600_LIDAR = "e4gqia"
 
 
@@ -69,29 +72,33 @@ async def test_the_profile_is_the_only_zone_gate(
 ) -> None:
     """Turning the flag on for a class is all it takes to give it MowArea.
 
-    Guards against a hardcoded class list surviving next to the profile: the
-    O800 has no zone confirmation, so it can only get MowArea from the flag.
+    Guards against a hardcoded class list surviving next to the profile: this
+    class has zone mowing off, so it can only get MowArea from the flag.
     """
     monkeypatch.setitem(
-        SUPPORTED_CLASSES, O800, replace(SUPPORTED_CLASSES[O800], zone_mowing=True)
+        SUPPORTED_CLASSES,
+        NO_ZONE,
+        replace(SUPPORTED_CLASSES[NO_ZONE], zone_mowing=True),
     )
 
-    await patch_device_info(O800)
-    info = await get_static_device_info(O800)
+    await patch_device_info(NO_ZONE)
+    info = await get_static_device_info(NO_ZONE)
 
     assert info.capabilities.clean.action.area is MowArea
-    verify_capabilities(info.capabilities, O800)
+    verify_capabilities(info.capabilities, NO_ZONE)
 
 
 async def test_verify_capabilities_reads_the_flag_from_the_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A class flagged for zone mowing but built without MowArea fails loudly."""
-    await patch_device_info(O800)
-    info = await get_static_device_info(O800)
+    await patch_device_info(NO_ZONE)
+    info = await get_static_device_info(NO_ZONE)
     monkeypatch.setitem(
-        SUPPORTED_CLASSES, O800, replace(SUPPORTED_CLASSES[O800], zone_mowing=True)
+        SUPPORTED_CLASSES,
+        NO_ZONE,
+        replace(SUPPORTED_CLASSES[NO_ZONE], zone_mowing=True),
     )
 
     with pytest.raises(PatchContractError, match="MowArea capability"):
-        verify_capabilities(info.capabilities, O800)
+        verify_capabilities(info.capabilities, NO_ZONE)

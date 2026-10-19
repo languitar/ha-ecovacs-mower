@@ -7,7 +7,8 @@ later on a G1-800 (``77atlz``), firmware 1.36.208, where it goes out on
 ``clean_V2``. On an O1200 LiDAR Pro (``2i0fns``), firmware 1.13.10, the
 app's own start was captured and matches the non-V2 payload exactly. On an
 A3000 LiDAR Pro (``51rcxt``), firmware 1.13.10, a start sent from Home
-Assistant mowed the area it named (issue #135).
+Assistant mowed the area it named (issue #135), and the same on an O800
+RTK (``9bts2s``), firmware 1.13.8, on the non-V2 topic (PR #142).
 
 Which classes receive it is decided by the ``zone_mowing`` flag on their
 ``MowerProfile`` in ``hardware.py``, set only where the payload has been

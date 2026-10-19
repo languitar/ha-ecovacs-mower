@@ -145,6 +145,14 @@ class MowerProfile:
 #                     run yet; it is the same payload on the same topic.
 #                     51rcxt: a zone run started from Home Assistant on the
 #                     A3000 LiDAR Pro mowed the area asked for (issue #135).
+#                     9bts2s: a zone start sent from Home Assistant on the
+#                     O800 RTK, firmware 1.13.8 (PR #142): spotArea with
+#                     value "1" went out on clean, was answered code 0, and
+#                     the mower left for that area — onCleanInfo reported
+#                     state clean with content type spotArea and value "1"
+#                     while it ran, and getChargeState went from charging to
+#                     not. The non-V2 family was chosen first try, so no
+#                     clean_V2 attempt was needed.
 #   border_mowing   — 77atlz: the app's border-job request captured on the
 #                     G1-800, firmware 1.36.208 (issue #12): clean_V2 with
 #                     {"type": "border", "value": "mid:<mid>"}, acknowledged
@@ -160,7 +168,7 @@ class MowerProfile:
 #                     model, only its trimming job (borderrotate, issue #138).
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", zone_mowing=True),
-    "9bts2s": MowerProfile("9bts2s"),
+    "9bts2s": MowerProfile("9bts2s", zone_mowing=True),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile("77atlz", zone_mowing=True, border_mowing=True),
     "e4gqia": MowerProfile("e4gqia", area_parameters=True, zone_mowing=True),
