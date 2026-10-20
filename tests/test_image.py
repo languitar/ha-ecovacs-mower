@@ -334,8 +334,10 @@ async def test_update_entity_asks_where_it_is_and_what_is_left() -> None:
         GetPosMower,
     )
     from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
 
     instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance._map = MowerMap(remaining_plan=True)
     instance._execute_command = AsyncMock(return_value=True)
 
     await instance.async_update()
@@ -345,6 +347,31 @@ async def test_update_entity_asks_where_it_is_and_what_is_left() -> None:
     # The poll tick stops at the dock, so this is the only way to see a
     # finished lawn empty out.
     assert any(isinstance(command, GetMapTrack) for command in sent)
+
+
+async def test_update_entity_asks_only_where_it_is_under_the_coverage_reading() -> (
+    None
+):
+    # Nothing on such a class would read the answer as a plan, so the
+    # command is not sent at all — the map carries the class's reading.
+    from unittest.mock import AsyncMock
+
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+        GetPosMower,
+    )
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance._map = MowerMap()
+    instance._execute_command = AsyncMock(return_value=True)
+
+    await instance.async_update()
+
+    sent = [call.args[0] for call in instance._execute_command.await_args_list]
+    assert [type(command) for command in sent] == [GetPosMower]
+    assert not any(isinstance(command, GetMapTrack) for command in sent)
 
 
 def test_the_map_is_not_polled() -> None:

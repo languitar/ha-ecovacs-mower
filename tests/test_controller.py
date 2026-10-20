@@ -792,12 +792,36 @@ async def test_poll_asks_for_the_whole_of_what_is_left_to_mow() -> None:
 
     controller = EcovacsController.__new__(EcovacsController)
     device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
     device.execute_command = AsyncMock(return_value={})
 
     await controller._poll(device, None)
 
     sent = [call.args[0] for call in device.execute_command.await_args_list]
     assert any(isinstance(command, GetMapTrack) for command in sent)
+
+
+async def test_poll_does_not_ask_a_class_that_reads_coverage() -> None:
+    # Nothing would read the answer as a plan, and the request's own shape
+    # is confirmed on the one class too — an O1200 is not asked at all.
+    from unittest.mock import AsyncMock, MagicMock
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetMapTrack,
+        GetPosMower,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "2i0fns"}
+    device.execute_command = AsyncMock(return_value={})
+
+    await controller._poll(device, None)
+
+    sent = [call.args[0] for call in device.execute_command.await_args_list]
+    assert [type(command) for command in sent] == [GetPosMower]
+    assert not any(isinstance(command, GetMapTrack) for command in sent)
 
 
 async def test_teardown_cancels_outstanding_polls() -> None:
@@ -852,11 +876,13 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     mower_map = controller.maps["did-1"]
     assert mower_map.boundaries == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.remaining == {("1", 5): [((0, 0), (0, 100))]}
-    # Eager subscriptions: 5 map events, PositionsEvent, and — on this
-    # class — MowerAreaEvent for the labels. EventBus.notify drops events
-    # nobody subscribes to, so waiting for the entity to subscribe would
-    # lose data.
-    assert device.events.subscribe.call_count == 7
+    # Eager subscriptions: 6 map events — both readings of onMapTrack are
+    # subscribed and OnMapTrack publishes whichever this class has —
+    # PositionsEvent, and MowerAreaEvent for the labels, which this class
+    # is also the one validated for. EventBus.notify drops events nobody
+    # subscribes to, so waiting for the entity to subscribe would lose
+    # data.
+    assert device.events.subscribe.call_count == 8
 
 
 async def test_setup_map_survives_corrupt_store() -> None:

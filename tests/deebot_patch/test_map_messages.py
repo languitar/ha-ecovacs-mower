@@ -16,6 +16,7 @@ from custom_components.ecovacs_mower.deebot_patch.hardware import (
     profile_for_class,
 )
 from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+    MowerCoverageEvent,
     MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
@@ -38,6 +39,7 @@ FIXTURES: dict[str, list[Any]] = json.loads(
 
 
 _MAP_EVENTS = (
+    MowerCoverageEvent,
     MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
@@ -134,10 +136,40 @@ def test_on_ari_obstacle_update_leaves_geometry_alone() -> None:
 
 
 def test_on_map_track_notifies_the_rows_still_to_mow() -> None:
-    events = _notified(OnMapTrack, "on_map_track_single_lane")
+    events = _notified(OnMapTrack, "on_map_track_single_lane", class_="9bts2s")
     assert len(events) == 1
     assert isinstance(events[0], MowerRemainingEvent)
     assert events[0].rows == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+
+
+def test_on_map_track_notifies_coverage_without_the_flag() -> None:
+    # The same bytes, read as this integration has always read them. The
+    # measurement behind the other reading is one job on one mower, so
+    # every class it was not taken on keeps what it had.
+    events = _notified(OnMapTrack, "on_map_track_single_lane", class_="2i0fns")
+    assert len(events) == 1
+    assert isinstance(events[0], MowerCoverageEvent)
+    assert events[0].lanes == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+
+
+def test_on_map_track_on_an_unregistered_bus_notifies_coverage() -> None:
+    # No record, no profile, nothing validated — the safe reading.
+    events = _notified(OnMapTrack, "on_map_track_single_lane")
+    assert [type(event) for event in events] == [MowerCoverageEvent]
+
+
+def test_on_map_track_keeps_an_empty_full_plan_to_itself_without_the_flag() -> (
+    None
+):
+    # Under the remaining-plan reading an empty full blob says the job is
+    # finished, which is the most informative blob there is. Under the
+    # coverage reading it says nothing at all, and publishing it as a
+    # complete set would wipe the layer.
+    event_bus = Mock()
+    register(event_bus, profile_for_class("2i0fns"))
+    OnMapTrack._notify(event_bus, json.dumps([["1", "1"]]).encode())
+
+    assert event_bus.notify.call_args_list == []
 
 
 def test_on_special_contour_notifies_nogo_zones() -> None:

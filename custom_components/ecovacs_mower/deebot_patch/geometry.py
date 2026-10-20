@@ -154,22 +154,28 @@ class AreaInfo:
 
 @dataclass(frozen=True)
 class MapTrack:
-    """Decoded onMapTrack: the rows still to mow, not the ones mowed.
+    """Decoded onMapTrack: lane stretches per 100 mm row.
 
-    Each row is a lane of the current job's plan, 100 mm from the next,
-    and its segments are the stretches of that lane the mower has not
-    reached yet. Captured on an O800 RTK (``9bts2s``, fw 1.13.8) while a
-    job ran: one row's remaining length fell 10.25 m -> 0.00 m over 70
-    seconds at 0.33 m/s — mowing speed — and the row then vanished from
+    Deliberately neutral about what they are. On a class whose profile
+    sets ``remaining_plan`` they are the stretches of the current job the
+    mower has not reached yet — measured on an O800 RTK (``9bts2s``, fw
+    1.13.8) while a job ran: one row's length fell 10.25 m -> 0.00 m over
+    70 seconds at 0.33 m/s, mowing speed, and the row then vanished from
     the next snapshot. Across the same capture 1 row finished and was
     dropped, 1 shrank and none appeared, and the whole-map total only
-    ever fell, 809.6 m -> 742.1 m. Coverage can only grow, so this is
-    its complement.
+    ever fell, 809.6 m -> 742.1 m. Coverage can only grow, so there this
+    is its complement.
 
-    An empty segment list is a row with nothing left in it.
+    Everywhere else they are read as coverage, which is what this
+    integration has always done and what nobody has checked. ``OnMapTrack``
+    is where the two readings part; the bytes are the same either way.
+
+    An empty segment list is a row with nothing in it. ``full`` says the
+    blob is the whole set rather than the single row the mower is working
+    on, which only matters under the remaining-plan reading.
     """
 
-    remaining: dict[tuple[str, int], list[Segment]]
+    rows: dict[tuple[str, int], list[Segment]]
     full: bool
 
 
@@ -515,7 +521,7 @@ def parse_map_track(blob: bytes) -> MapTrack:
             rows[(fields[0], int(fields[2]))] = list(
                 zip(points[::2], points[1::2])
             )
-    return MapTrack(remaining=rows, full=full)
+    return MapTrack(rows=rows, full=full)
 
 
 def parse_map_trace(blob: bytes) -> CoveredArea:

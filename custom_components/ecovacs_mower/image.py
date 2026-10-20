@@ -29,6 +29,7 @@ from homeassistant.util import dt as dt_util
 from . import EcovacsMowerConfigEntry
 from .deebot_patch.commands import GetMapTrack, GetPosMower
 from .deebot_patch.map_messages import (
+    MowerCoverageEvent,
     MowerRemainingEvent,
     MowerCoveredAreaEvent,
     MowerMapInfoEvent,
@@ -108,6 +109,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         self._subscribe(MowerMapInfoEvent, self._on_geometry)
         self._subscribe(MowerObstaclesEvent, self._on_geometry)
         self._subscribe(MowerRemainingEvent, self._on_geometry)
+        self._subscribe(MowerCoverageEvent, self._on_geometry)
         self._subscribe(MowerCoveredAreaEvent, self._on_geometry)
         self._subscribe(MowerNoGoZonesEvent, self._on_geometry)
         self._subscribe(PositionsEvent, self._on_positions)
@@ -157,10 +159,12 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         because the tick stops at the dock, and the end of a job is
         exactly when the map is most worth refreshing: a finished lawn
         has nothing left in it, and nobody is told that until somebody
-        asks.
+        asks. Only where the map reads onMapTrack as that plan — the map
+        carries the class's reading, so there is nothing to look up here.
         """
         await self._execute_command(GetPosMower())
-        await self._execute_command(GetMapTrack())
+        if self._map.remaining_plan:
+            await self._execute_command(GetMapTrack())
 
     def _bump(self) -> None:
         # Every write supersedes a pending trailing refresh, whichever event
@@ -174,6 +178,7 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         event: MowerMapInfoEvent
         | MowerObstaclesEvent
         | MowerRemainingEvent
+        | MowerCoverageEvent
         | MowerCoveredAreaEvent
         | MowerNoGoZonesEvent,
     ) -> None:
