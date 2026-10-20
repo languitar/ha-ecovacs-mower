@@ -63,7 +63,7 @@ async def test_async_image_renders_the_map() -> None:
     assert image.startswith(b"<svg")
     assert b"No map data yet" in image
 
-    mower_map.update_map_info([(0, 0), (100, 0), (100, 100)], None, None)
+    mower_map.update_map_info([[(0, 0), (100, 0), (100, 100)]], None, None)
     image = await EcovacsMowerMap.async_image(instance)
     assert b"No map data yet" not in image
     assert b'class="boundary"' in image

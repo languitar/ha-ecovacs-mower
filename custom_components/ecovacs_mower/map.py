@@ -19,7 +19,9 @@ class MowerMap:
     """Latest known map geometry and position for one device."""
 
     def __init__(self) -> None:
-        self.boundary: Polygon | None = None
+        # One outline per mowed area: a multi-area map has one per
+        # lawn, every other mower exactly one.
+        self.boundaries: list[Polygon] = []
         self.zones: list[Polygon] = []
         self.corridors: list[Polygon] = []
         self.obstacles: list[Polygon] = []
@@ -46,7 +48,7 @@ class MowerMap:
     def is_empty(self) -> bool:
         """True when there is no geometry worth rendering."""
         return (
-            self.boundary is None
+            not self.boundaries
             and not self.zones
             and not self.lanes
             and not self.covered
@@ -57,13 +59,13 @@ class MowerMap:
 
     def update_map_info(
         self,
-        boundary: Polygon | None,
+        boundaries: list[Polygon] | None,
         zones: list[Polygon] | None,
         corridors: list[Polygon] | None,
     ) -> None:
         """Merge static geometry; None means "unchanged"."""
-        if boundary is not None:
-            self.boundary = boundary
+        if boundaries is not None:
+            self.boundaries = boundaries
         if zones is not None:
             self.zones = zones
         if corridors is not None:
@@ -120,7 +122,7 @@ class MowerMap:
     def as_dict(self) -> dict[str, Any]:
         """Serializable snapshot for Store. Track/position stay volatile."""
         return {
-            "boundary": self.boundary,
+            "boundaries": self.boundaries,
             "zones": self.zones,
             "corridors": self.corridors,
             "obstacles": self.obstacles,
@@ -141,8 +143,17 @@ class MowerMap:
             return [(int(p[0]), int(p[1])) for p in points]
 
         mower_map = cls()
-        if data.get("boundary"):
-            mower_map.boundary = polygon(data["boundary"])
+        if data.get("boundaries"):
+            mower_map.boundaries = [
+                polygon(points) for points in data["boundaries"]
+            ]
+        elif data.get("boundary"):
+            # A snapshot written before a map could hold more than one
+            # outline. The store version is deliberately not bumped for
+            # this: Store.async_load raises NotImplementedError for a
+            # version it has no migration hook for, and one outline needs
+            # nothing but wrapping.
+            mower_map.boundaries = [polygon(data["boundary"])]
         mower_map.zones = [polygon(p) for p in data.get("zones", [])]
         mower_map.corridors = [polygon(p) for p in data.get("corridors", [])]
         mower_map.obstacles = [polygon(p) for p in data.get("obstacles", [])]

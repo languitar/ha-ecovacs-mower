@@ -9,10 +9,10 @@ BOUNDARY = [(0, 0), (1000, 0), (1000, 1000), (0, 1000)]
 
 def test_none_fields_leave_previous_values_untouched() -> None:
     mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, [[(1, 1)]], None)
+    mower_map.update_map_info([BOUNDARY], [[(1, 1)]], None)
     # An idle heartbeat: boundary only, zones/corridors None.
     mower_map.update_map_info(None, None, None)
-    assert mower_map.boundary == BOUNDARY
+    assert mower_map.boundaries == [BOUNDARY]
     assert mower_map.zones == [[(1, 1)]]
 
 
@@ -50,7 +50,7 @@ def test_track_thins_the_old_half_when_full() -> None:
 
 def test_round_trip_through_dict() -> None:
     mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, [[(1, 2), (3, 4)]], [])
+    mower_map.update_map_info([BOUNDARY], [[(1, 2), (3, 4)]], [])
     mower_map.update_obstacles([[(5, 6)]])
     mower_map.update_nogo([[(7, 8)]])
     mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
@@ -62,7 +62,7 @@ def test_round_trip_through_dict() -> None:
     data = json.loads(json.dumps(mower_map.as_dict()))
     restored = MowerMap.from_dict(data)
 
-    assert restored.boundary == BOUNDARY
+    assert restored.boundaries == [BOUNDARY]
     assert restored.zones == [[(1, 2), (3, 4)]]
     assert restored.obstacles == [[(5, 6)]]
     assert restored.nogo_zones == [[(7, 8)]]
@@ -71,12 +71,20 @@ def test_round_trip_through_dict() -> None:
     assert restored.track == [] and restored.position is None
 
 
+def test_a_legacy_snapshot_s_one_outline_is_wrapped() -> None:
+    # Snapshots written before a map could hold more than one outline
+    # store a single polygon under "boundary". The store version is
+    # unchanged, so those are the snapshots on disk after an upgrade.
+    restored = MowerMap.from_dict({"boundary": [[0, 0], [10, 0], [10, 10]]})
+    assert restored.boundaries == [[(0, 0), (10, 0), (10, 10)]]
+
+
 def test_is_empty() -> None:
     mower_map = MowerMap()
     assert mower_map.is_empty
     mower_map.update_position(0, 0, 0)  # position alone is not a map
     assert mower_map.is_empty
-    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_map_info([BOUNDARY], None, None)
     assert not mower_map.is_empty
 
 

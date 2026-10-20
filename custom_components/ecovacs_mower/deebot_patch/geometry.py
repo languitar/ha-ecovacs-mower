@@ -123,9 +123,14 @@ class FragmentBuffer:
 
 @dataclass(frozen=True)
 class MapInfo:
-    """Static map geometry. None means "no update", never "empty"."""
+    """Static map geometry. None means "no update", never "empty".
 
-    boundary: Polygon | None = None
+    ``boundaries`` holds one lawn outline per mowed area. Every dialect
+    reports exactly one, except a chain-dialect ``onArI`` from a mower
+    whose map has more than one area.
+    """
+
+    boundaries: list[Polygon] | None = None
     zones: list[Polygon] | None = None
     corridors: list[Polygon] | None = None
 
@@ -167,6 +172,14 @@ def parse_map_info(blob: bytes) -> MapInfo:
     The first two have an idle variant carrying no geometry — ``s1;0;``
     and a bare ``1`` respectively — which yields all-None.
 
+    Record 1 holds **one element per mowed area**, not one outline: the
+    first is marked ``s1`` and the rest lead with the area's own id,
+    otherwise identically shaped. A three-lawn GOAT O800 RTK (``9bts2s``,
+    fw 1.13.8) sends ``s1;1;…``, ``2;1;…`` and ``3;1;…`` in it — 2420,
+    1222 and 499 points (issue #41). Reading only the ``s1`` element
+    dropped the other lawns here, and since the event replaces the stored
+    set, an onMI arriving after an onArI took the map back down to one.
+
     1.36 drops the ``s1`` marker for a record id, appends a per-point
     flag, and adds sections. Only section 1 is read here. Section 2 is
     the same outline retraced at the 50 mm grid step — 1924 points to
@@ -176,23 +189,28 @@ def parse_map_info(blob: bytes) -> MapInfo:
     is the boundary in every dialect, so publishing more than it would be
     a new claim rather than a decode. The fixture carries all five.
     """
-    boundary: Polygon | None = None
+    boundaries: list[Polygon] = []
     for entry in json.loads(blob):
         if entry[0] != "1" or len(entry) < 2:
             continue
-        fields = entry[1].split(";")
-        if len(fields) < 2:
-            # 1.17's idle marker: the record is the bare id, no geometry.
-            continue
-        if fields[0] == "s1":
-            if "," in fields[1]:
-                boundary = _points(entry[1])
-            elif fields[1] == "1":
-                boundary = chain_to_points(";".join(fields[2:]))
-        elif "," in fields[1]:
-            # 1.36: an id where "s1" used to be, points from there on.
-            boundary = _points(entry[1])
-    return MapInfo(boundary=boundary)
+        for element in entry[1:]:
+            fields = element.split(";")
+            if len(fields) < 2:
+                # 1.17's idle marker: the record is the bare id.
+                continue
+            if fields[1] == "1":
+                # 1.13: "<id>;1;<x,y>;<chain code>", where the first
+                # area's id is the marker "s1".
+                outline = chain_to_points(";".join(fields[2:]))
+            elif "," in fields[1]:
+                # 1.17 and 1.36: points from the second field on, under
+                # "s1" and under an id respectively.
+                outline = _points(element)
+            else:
+                continue
+            if outline:
+                boundaries.append(outline)
+    return MapInfo(boundaries=boundaries or None)
 
 
 def _polygons(items: list[str]) -> list[Polygon]:
@@ -303,14 +321,43 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
 def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
     """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
 
-    Entry format: ``["<mid>", "<section>", "<flag>", *items]`` where flag
+    Entry format: ``["<area>", "<section>", "<flag>", *items]`` where flag
     "0" means "no update" for that section — represented as None so stored
     geometry is never wiped by a heartbeat.
+
+    **The leading field is the area id, not the map id.** The map is named
+    by the message envelope, and a mower whose map holds three lawns sends
+    one entry per (area, section) pair, so the same section number arrives
+    three times. Every capture this parser was written from had a single
+    area, where the two readings are indistinguishable; a GOAT O800 RTK
+    (``9bts2s``, fw 1.13.8) with three lawns is what told them apart
+    (issue #41). Keyed by section alone, each area's entry replaced the one
+    before it and only the last area survived — for the outline that meant
+    two thirds of the map silently disappeared.
+
+    Section 6 is named after a guess, and the name is wrong. On that
+    mower all 230, 106 and 186 points of its three records lie exactly on
+    the outline of area 1, and its owner drew them in the app to say where
+    the mower should mow flush against the lawn edge. They are arcs of the
+    boundary, not passages between lawns, which is why they are the one
+    layer the renderer must leave open. The field keeps the name for now:
+    changing it reaches the event, the store and the renderer.
+
+    An area's items are therefore accumulated into their section instead of
+    replacing it. One consequence is worth naming: a section is published
+    as soon as *any* area updates it, and what is published then holds only
+    the areas that sent geometry in that blob, because the events carry
+    complete sets. Both blobs captured from that mower move a section's
+    flag together across all three areas — one full snapshot, one
+    obstacles-only heartbeat — so an area updating a section on its own is
+    not a shape anything has shown. Keeping per-area state all the way into
+    ``MowerMap`` is what would make it impossible, and that is a much
+    larger change than this one.
     """
     sections: dict[str, list[str]] = {}
     for entry in entries:
         if len(entry) > 2 and entry[2] == "1":
-            sections[entry[1]] = entry[3:]
+            sections.setdefault(entry[1], []).extend(entry[3:])
 
     # ponytail: sections 1 and 2 are merged into one zones list — every
     # captured onArI updates them together (both flag "1" or both "0").
@@ -327,16 +374,19 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
             )
         zones = _polygons(sections.get("1", []) + sections.get("2", []))
 
-    boundary: Polygon | None = None
+    boundaries: list[Polygon] | None = None
     if "5" in sections:
-        boundary_polygons = _polygons(sections["5"])
-        boundary = boundary_polygons[0] if boundary_polygons else None
+        # An empty section 5 means "no update", not "no lawn": a heartbeat
+        # that carried no geometry must never wipe a stored outline.
+        boundaries = _polygons(sections["5"]) or None
 
     corridors = _polygons(sections["6"]) if "6" in sections else None
     obstacles = _polygons(sections["3"]) if "3" in sections else None
 
     return AreaInfo(
-        map_info=MapInfo(boundary=boundary, zones=zones, corridors=corridors),
+        map_info=MapInfo(
+            boundaries=boundaries, zones=zones, corridors=corridors
+        ),
         obstacles=obstacles,
     )
 
@@ -405,6 +455,28 @@ def parse_map_trace(blob: bytes) -> CoveredArea:
     )
 
 
-def parse_special_contour(blob: bytes) -> list[Polygon]:
-    """Parse onSpecialContour no-go zones: plain ``x,y;x,y;…;`` polygons."""
-    return [_points(entry[4]) for entry in json.loads(blob)]
+def parse_special_contour(blob: bytes) -> list[Polygon] | None:
+    """Parse onSpecialContour no-go zones: plain ``x,y;x,y;…;`` polygons.
+
+    A record carrying fewer than three points is not a polygon and is
+    dropped. A GOAT O800 RTK (``9bts2s``, fw 1.13.8) keeps its no-go zone
+    in onArI section 2 and pushes this on onSpecialContour regardless:
+
+        [["1","1","2","-1828859640,-1828859302","-22813,13082;"]]
+
+    Field 4 is one point, and field 3 is not coordinates at all.
+
+    ``None`` means "no update", the same as everywhere else here, and is
+    what a blob of records that all fail that test decodes to: the event
+    carries the complete no-go set, so publishing the empty remainder
+    would wipe whatever the mower had reported before it — which is how
+    that single point became an entire no-go layer (issue #41). An empty
+    list is still "there are none", and only a blob that really holds no
+    records decodes to one.
+    """
+    records = json.loads(blob)
+    contours = (_points(entry[4]) for entry in records)
+    polygons = [points for points in contours if len(points) >= 3]
+    if records and not polygons:
+        return None
+    return polygons

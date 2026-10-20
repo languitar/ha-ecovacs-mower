@@ -14,12 +14,30 @@ BOUNDARY = [(0, 0), (10000, 0), (10000, 10000), (0, 10000)]
 
 def _populated_map() -> MowerMap:
     mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, [[(1, 1), (2, 2), (3, 1)]], [])
+    mower_map.update_map_info([BOUNDARY], [[(1, 1), (2, 2), (3, 1)]], [])
     mower_map.update_nogo([[(100, 100), (200, 100), (200, 200)]])
     mower_map.update_obstacles([[(300, 300), (400, 300), (400, 400)]])
     mower_map.update_coverage({("1", 5): [((500, 0), (500, 9000))]})
     mower_map.update_position(1000, 2000, 90)
     return mower_map
+
+
+def test_corridors_are_drawn_open_and_the_lawn_closed() -> None:
+    # Section 6 is an arc of the lawn outline, not a ring: on a real
+    # three-lawn map its ends sit 5 to 11 metres apart, where every ring —
+    # outline, no-go zone, obstacle — closes within one 50 mm grid step.
+    # Closing it drew a straight line across the garden.
+    mower_map = MowerMap()
+    mower_map.update_map_info(
+        [BOUNDARY], None, [[(0, 0), (1000, 0), (2000, 500)]]
+    )
+    svg = render(mower_map)
+
+    corridor = re.search(r'class="corridor" d="([^"]+)"', svg)
+    assert corridor is not None
+    assert not corridor.group(1).endswith("Z")
+    lawn = re.search(r'class="boundary" d="([^"]+)"', svg)
+    assert lawn is not None and lawn.group(1).endswith("Z")
 
 
 def test_empty_map_renders_placeholder() -> None:
@@ -44,7 +62,7 @@ def test_populated_map_renders_all_layers() -> None:
 
 def test_marker_defaults_to_dock_without_position() -> None:
     mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_map_info([BOUNDARY], None, None)
     svg = render(mower_map)
     # A map without position data still shows the mower — at the dock.
     assert 'class="mower"' in svg
@@ -77,7 +95,7 @@ def test_heading_arrow_points_along_the_reported_heading(
     # travel to within a few degrees. The convention before this was worked
     # out from the symptoms in issue #41, not measured, and was 90 degrees off.
     mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_map_info([BOUNDARY], None, None)
     mower_map.update_position(1000, 1000, heading)
     mower_cx, mower_cy, line_x2, line_y2 = _mower_and_heading_endpoint(
         render(mower_map)
@@ -93,7 +111,7 @@ def test_heading_arrow_turns_the_way_the_mower_turns() -> None:
     # to left (180), never the mirror image.
     def endpoint(heading: int) -> tuple[float, float]:
         mower_map = MowerMap()
-        mower_map.update_map_info(BOUNDARY, None, None)
+        mower_map.update_map_info([BOUNDARY], None, None)
         mower_map.update_position(1000, 1000, heading)
         cx, cy, x2, y2 = _mower_and_heading_endpoint(render(mower_map))
         return x2 - cx, y2 - cy
@@ -115,7 +133,7 @@ def test_covered_area_renders_with_holes_punched_out() -> None:
     # Firmware 1.17 sends coverage as an outline plus the unmowed islands
     # inside it. One path, even-odd fill: the holes cut the fill away.
     mower_map = MowerMap()
-    mower_map.update_map_info(BOUNDARY, None, None)
+    mower_map.update_map_info([BOUNDARY], None, None)
     mower_map.update_covered(
         [[(0, 0), (9000, 0), (9000, 9000), (0, 9000)]],
         [[(1000, 1000), (2000, 1000), (2000, 2000)]],

@@ -45,10 +45,13 @@ def render(mower_map: MowerMap) -> str:
     points: list[Point] = list(mower_map.track)
     points.append(mower_map.dock)
     for polygon in (
-        [mower_map.boundary] if mower_map.boundary else []
-    ) + mower_map.zones + mower_map.corridors + mower_map.obstacles + (
-        mower_map.nogo_zones
-    ) + mower_map.covered:
+        mower_map.boundaries
+        + mower_map.zones
+        + mower_map.corridors
+        + mower_map.obstacles
+        + mower_map.nogo_zones
+        + mower_map.covered
+    ):
         points.extend(polygon)
     for segments in mower_map.lanes.values():
         for start, end in segments:
@@ -78,9 +81,9 @@ def render(mower_map: MowerMap) -> str:
         f'<rect width="{width:.0f}" height="{height:.0f}" '
         f'fill="{_BACKGROUND}"/>',
     ]
-    if mower_map.boundary:
+    for polygon in mower_map.boundaries:
         parts.append(
-            f'<path class="boundary" d="{path(mower_map.boundary)}" '
+            f'<path class="boundary" d="{path(polygon)}" '
             f'fill="{_LAWN_FILL}" stroke="{_LAWN_EDGE}" stroke-width="1.5"/>'
         )
     if mower_map.covered:
@@ -108,9 +111,11 @@ def render(mower_map: MowerMap) -> str:
             f'stroke="{_ZONE}" stroke-width="1" stroke-dasharray="4 3"/>'
         )
     for polygon in mower_map.corridors:
+        # Open: these are arcs of the lawn outline, marking where the
+        # mower is told to mow flush against the edge — not rings.
         parts.append(
-            f'<path class="corridor" d="{path(polygon)}" fill="none" '
-            f'stroke="{_CORRIDOR}" stroke-width="1"/>'
+            f'<path class="corridor" d="{path(polygon, close=False)}" '
+            f'fill="none" stroke="{_CORRIDOR}" stroke-width="1"/>'
         )
     for polygon in mower_map.nogo_zones:
         parts.append(

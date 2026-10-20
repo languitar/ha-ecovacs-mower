@@ -52,9 +52,13 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MowerMapInfoEvent(Event):
-    """Static map geometry. None fields mean "unchanged", never "empty"."""
+    """Static map geometry. None fields mean "unchanged", never "empty".
 
-    boundary: Polygon | None
+    ``boundaries`` is one lawn outline per mowed area; all but a
+    multi-area chain-dialect ``onArI`` report exactly one.
+    """
+
+    boundaries: list[Polygon] | None
     zones: list[Polygon] | None
     corridors: list[Polygon] | None
 
@@ -164,11 +168,11 @@ class OnMI(_MapMessage):
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         map_info = parse_map_info(blob)
-        if map_info.boundary is None:
+        if map_info.boundaries is None:
             return HandlingResult.success()  # idle snapshot, nothing new
         event_bus.notify(
             MowerMapInfoEvent(
-                boundary=map_info.boundary, zones=None, corridors=None
+                boundaries=map_info.boundaries, zones=None, corridors=None
             )
         )
         return HandlingResult.success()
@@ -227,13 +231,13 @@ class OnArI(_MapMessage):
         area = parse_area_info(blob)
         map_info = area.map_info
         if (
-            map_info.boundary is not None
+            map_info.boundaries is not None
             or map_info.zones is not None
             or map_info.corridors is not None
         ):
             event_bus.notify(
                 MowerMapInfoEvent(
-                    boundary=map_info.boundary,
+                    boundaries=map_info.boundaries,
                     zones=map_info.zones,
                     corridors=map_info.corridors,
                 )
@@ -281,7 +285,8 @@ class OnSpecialContour(_MapMessage):
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
-        event_bus.notify(
-            MowerNoGoZonesEvent(zones=parse_special_contour(blob))
-        )
+        zones = parse_special_contour(blob)
+        if zones is None:
+            return HandlingResult.analyse()  # nothing readable in it
+        event_bus.notify(MowerNoGoZonesEvent(zones=zones))
         return HandlingResult.success()
