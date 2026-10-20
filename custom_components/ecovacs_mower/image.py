@@ -164,7 +164,9 @@ class EcovacsMowerMap(EcovacsEntity[Capabilities], ImageEntity):
         this refresh would be worth paying for buys nothing, and during a
         job it would put the whole 6.7 KB plan on a call an automation
         makes every few seconds. The five-minute tick asks instead, which
-        only runs while the mower is out: see controller._poll.
+        only runs while the mower is out: see controller._poll. The one
+        thing a tick cannot cover, a job ending, is announced from the
+        job edge itself — see map_messages.reset_remaining_plan().
         """
         await self._execute_command(GetPosMower())
 

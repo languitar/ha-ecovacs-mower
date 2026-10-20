@@ -281,7 +281,10 @@ yet; they thin out and disappear as it works, and where there are none the map
 is making no claim. That is what `onMapTrack` reports there — the remainder of
 the plan, not the ground already covered: a row's remaining length was seen
 falling 10.25 m to zero over 70 seconds at mowing speed, after which the row
-vanished.
+vanished. Its plan is dropped when the mower announces the end of a job,
+because nothing else would say so — the whole plan only arrives when asked, and
+the five-minute tick that asks stops at the dock, so what was left at the last
+tick would otherwise stay drawn as uncut, restarts included.
 
 That model also stops drawing the path the mower drove, because a GOAT pushes
 its position for the first minute of a job and then stops, so the record is a

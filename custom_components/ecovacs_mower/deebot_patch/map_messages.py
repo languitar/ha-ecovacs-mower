@@ -349,3 +349,36 @@ class OnSpecialContour(_MapMessage):
             return HandlingResult.analyse()  # nothing readable in it
         event_bus.notify(MowerNoGoZonesEvent(zones=zones))
         return HandlingResult.success()
+
+
+def reset_remaining_plan(event_bus: EventBus) -> None:
+    """Publish the empty plan that says a finished job's remainder is gone.
+
+    Called by the job-edge handler in ``messages.py`` on a stop edge, the
+    only announcement there is that a job is over. Nothing else would
+    say so: the mower pushes rows while it works and sends the whole plan
+    only when asked, and the poll tick that would ask stops the moment it
+    docks. So whatever was left at the last tick stayed drawn as uncut,
+    and was persisted that way too — after an End, a rain stop or a
+    return to charge, most of a lawn the mower never reached. An empty
+    full plan is exactly how the mower itself reports a job it finished.
+
+    Published rather than written into the map directly, even though the
+    controller holds the map and could clear it from the same edge. The
+    bus keeps the last event of each type and drops the next one equal to
+    it, so a reset that never travelled the bus would leave the dropped
+    plan cached: stop a job before the mower has mowed a row, start the
+    same job again, and the identical plan is discarded as a duplicate
+    and never reaches the map, which stays empty until a row is mowed and
+    makes the next plan differ. Going through the bus also puts the reset
+    in order with the rows that arrive after it, and leaves the map with
+    one writer for the plan, ``on_remaining``.
+
+    Only where ``onMapTrack`` is read as that plan; coverage survives a
+    job by definition. The flag is read here because this module owns
+    what ``onMapTrack`` means — see ``OnMapTrack``.
+    """
+    profile = profile_for_bus(event_bus)
+    if profile is None or not profile.remaining_plan:
+        return
+    event_bus.notify(MowerRemainingEvent(rows={}, complete=True))

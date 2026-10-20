@@ -342,6 +342,10 @@ class EcovacsController:
             save()
 
         async def on_remaining(event: MowerRemainingEvent) -> None:
+            # The one writer for the plan, the end of a job included: a
+            # stop edge arrives here as an empty complete plan, which is
+            # how the mower itself reports a job it finished. See
+            # map_messages.reset_remaining_plan().
             mower_map.update_remaining(event.rows, event.complete)
             save()
 
@@ -482,6 +486,15 @@ class EcovacsController:
         broadcast — see GetMapTrack. Only on a class that reads
         onMapTrack that way: nothing else needs the whole set, and the
         request's own shape is confirmed on that one class too.
+
+        The tick keeps asking on the way home from a job that has just
+        ended, because it stops only once the mower reports DOCKED, and
+        that is left as it is: with no job to report on the mower refuses
+        getMapTrack outright (code 10000, measured at the dock), so the
+        question is answered with nothing and the reset published from the
+        job edge stands. Should a returning mower ever answer, the answer
+        is a complete plan for the job it is on, which update_remaining
+        treats as the mower's own word and nothing is lost either way.
         """
         device.events.request_refresh(StateEvent)
         device.events.request_refresh(StatsEvent)

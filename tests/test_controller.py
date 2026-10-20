@@ -878,10 +878,11 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     assert mower_map.remaining == {("1", 5): [((0, 0), (0, 100))]}
     # Eager subscriptions: 6 map events — both readings of onMapTrack are
     # subscribed and OnMapTrack publishes whichever this class has —
-    # PositionsEvent, and MowerAreaEvent for the labels, which this class
-    # is also the one validated for. EventBus.notify drops events nobody
+    # PositionsEvent, plus MowerAreaEvent for the labels, which this
+    # class is the validated one for. EventBus.notify drops events nobody
     # subscribes to, so waiting for the entity to subscribe would lose
-    # data.
+    # data. The end of a job needs no subscription of its own: it arrives
+    # as an empty complete plan on MowerRemainingEvent.
     assert device.events.subscribe.call_count == 8
 
 
@@ -967,6 +968,61 @@ async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
     assert mower_map.covered == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.covered_holes == [[(10, 10)]]
     store_cls.return_value.async_delay_save.assert_called_once()
+
+
+async def test_a_stopped_job_takes_its_remaining_plan_with_it() -> None:
+    """Nothing else tells the map a job is over.
+
+    The mower pushes rows while it works and sends the whole plan only
+    when asked, and the poll tick that would ask stops the moment it
+    docks. So whatever was left at the last tick stayed drawn as uncut,
+    and was persisted that way too — after an End or a rain stop, most of
+    a lawn the mower never reached.
+
+    The stop edge reaches the map as the empty complete plan the mower
+    itself reports on a finish, published by the patch layer, so this
+    handler is the one writer for the plan and the bus's cache follows it
+    — see deebot_patch.map_messages.reset_remaining_plan(). The map takes
+    no subscription on the edge itself.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerRemainingEvent,
+    )
+    from custom_components.ecovacs_mower.deebot_patch.messages import (
+        MowerJobEdgeEvent,
+    )
+
+    controller = EcovacsController.__new__(EcovacsController)
+    controller._hass = MagicMock()
+    controller.maps = {}
+    controller._map_stores = {}
+
+    device = MagicMock()
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
+    callbacks: dict[type, object] = {}
+    device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
+        event_type, callback
+    )
+
+    with patch(
+        "custom_components.ecovacs_mower.controller.Store"
+    ) as store_cls:
+        store_cls.return_value.async_load = AsyncMock(return_value=None)
+        await controller._setup_map(device)
+
+        mower_map = controller.maps["did-1"]
+        mower_map.update_remaining({("1", 7): [((0, 0), (900, 0))]})
+
+        await callbacks[MowerRemainingEvent](
+            MowerRemainingEvent(rows={}, complete=True)
+        )
+
+    assert MowerJobEdgeEvent not in callbacks
+    assert mower_map.remaining == {}
+    store_cls.return_value.async_delay_save.assert_called()
 
 
 async def test_setup_map_reads_the_area_names_only_where_they_are_validated() -> (
