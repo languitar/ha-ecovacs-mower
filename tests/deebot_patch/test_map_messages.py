@@ -6,11 +6,14 @@ installed (CI; local Python 3.12 cannot install the cp314-only wheels).
 
 from __future__ import annotations
 
+import asyncio
 from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
+
+from deebot_client.event_bus import EventBus
 
 from custom_components.ecovacs_mower.deebot_patch.hardware import (
     profile_for_class,
@@ -28,6 +31,9 @@ from custom_components.ecovacs_mower.deebot_patch.map_messages import (
     OnMapTrack,
     OnMI,
     OnSpecialContour,
+)
+from custom_components.ecovacs_mower.deebot_patch.messages import (
+    OnMowScheduleStop,
 )
 from custom_components.ecovacs_mower.deebot_patch.state_precedence import (
     register,
@@ -57,6 +63,18 @@ def _nogo_events(event_bus: Mock) -> list[Any]:
     ]
 
 
+def _feed(message, event_bus, key: str) -> None:
+    """Hand every captured fragment of a fixture to *message*, in order.
+
+    Deep-copied, because handling reads the payload apart — a fixture fed
+    to a second bus, or twice to one, has to arrive intact.
+    """
+    for item in sorted(
+        FIXTURES[key], key=lambda i: int(i["payload"]["body"]["data"]["index"])
+    ):
+        message.handle(event_bus, deepcopy(item["payload"]))
+
+
 def _notified(message, key: str, class_: str | None = None) -> list[Any]:
     """Feed every captured fragment of a fixture through the handler.
 
@@ -70,10 +88,7 @@ def _notified(message, key: str, class_: str | None = None) -> list[Any]:
     event_bus = Mock()
     if class_ is not None:
         register(event_bus, profile_for_class(class_))
-    for item in sorted(
-        FIXTURES[key], key=lambda i: int(i["payload"]["body"]["data"]["index"])
-    ):
-        message.handle(event_bus, item["payload"])
+    _feed(message, event_bus, key)
     return [
         call.args[0]
         for call in event_bus.notify.call_args_list
@@ -170,6 +185,43 @@ def test_on_map_track_keeps_an_empty_full_plan_to_itself_without_the_flag() -> (
     OnMapTrack._notify(event_bus, json.dumps([["1", "1"]]).encode())
 
     assert event_bus.notify.call_args_list == []
+
+
+async def test_an_identical_plan_after_a_stop_is_not_dropped_as_a_duplicate() -> (
+    None
+):
+    """Stop a job before a row is mowed, start it again: the same plan.
+
+    ``EventBus`` keeps the last event of each type and drops the next one
+    equal to it. So a reset written into the map without going through
+    the bus would leave the dropped plan cached, and the identical plan
+    the restarted job reports would be discarded as a duplicate — an
+    empty map that further polls could not refill, until a mowed row made
+    the plan differ. Driven on a real bus, because a Mock one never
+    dedupes and would pass either way.
+    """
+    bus = EventBus(AsyncMock(), Mock(get_refresh_commands=lambda _event: []))
+    register(bus, profile_for_class("9bts2s"))
+    received: list[MowerRemainingEvent] = []
+
+    async def on_remaining(event: MowerRemainingEvent) -> None:
+        received.append(event)
+
+    bus.subscribe(MowerRemainingEvent, on_remaining)
+
+    _feed(OnMapTrack, bus, "on_map_track_multipart")
+    # Only the trigger is read, and every stop drops the plan.
+    OnMowScheduleStop._handle_body(bus, {"trigger": "app"})
+    _feed(OnMapTrack, bus, "on_map_track_multipart")
+    await asyncio.sleep(0)
+
+    # The captured plan's 126 records fall on 123 distinct (zone, row)
+    # keys, and both replays of it are the same whole plan.
+    assert [(len(event.rows), event.complete) for event in received] == [
+        (123, True),
+        (0, True),
+        (123, True),
+    ]
 
 
 def test_on_special_contour_notifies_nogo_zones() -> None:

@@ -342,6 +342,10 @@ class EcovacsController:
             save()
 
         async def on_remaining(event: MowerRemainingEvent) -> None:
+            # The one writer for the plan, the end of a job included: a
+            # stop edge arrives here as an empty complete plan, which is
+            # how the mower itself reports a job it finished. See
+            # map_messages.reset_remaining_plan().
             mower_map.update_remaining(event.rows, event.complete)
             save()
 

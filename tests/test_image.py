@@ -218,6 +218,34 @@ async def test_a_geometry_event_cancels_the_pending_refresh() -> None:
     instance.async_write_ha_state.assert_called_once()
 
 
+async def test_the_end_of_a_job_repaints_the_map() -> None:
+    """The reset arrives as the empty plan the mower reports on a finish.
+
+    So it goes through the same handler as every other plan report, and
+    the entity needs no second subscription to the job edge to notice it
+    — which is what it used to carry. See
+    deebot_patch.map_messages.reset_remaining_plan().
+    """
+    from unittest.mock import MagicMock
+
+    from custom_components.ecovacs_mower.deebot_patch.map_messages import (
+        MowerRemainingEvent,
+    )
+    from custom_components.ecovacs_mower.image import EcovacsMowerMap
+    from custom_components.ecovacs_mower.map import MowerMap
+
+    instance = EcovacsMowerMap.__new__(EcovacsMowerMap)
+    instance.async_write_ha_state = MagicMock()
+    instance._trailing_bump = None
+    instance._map = MowerMap(remaining_plan=True)
+
+    await EcovacsMowerMap._on_geometry(
+        instance, MowerRemainingEvent(rows={}, complete=True)
+    )
+
+    instance.async_write_ha_state.assert_called_once()
+
+
 async def test_removal_drops_the_pending_refresh() -> None:
     from unittest.mock import MagicMock, patch
 
