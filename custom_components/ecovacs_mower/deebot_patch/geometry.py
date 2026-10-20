@@ -125,6 +125,10 @@ class FragmentBuffer:
 class MapInfo:
     """Static map geometry. None means "no update", never "empty".
 
+    ``corridors`` are the passages joining two mowed areas, which arrive
+    on onMI rather than onArI; ``flush_edges`` are arcs of one area's own
+    outline. The two were one field until the passages turned up.
+
     ``boundaries`` holds one lawn outline per mowed area. Every dialect
     reports exactly one, except a chain-dialect ``onArI`` from a mower
     whose map has more than one area.
@@ -132,6 +136,7 @@ class MapInfo:
 
     boundaries: list[Polygon] | None = None
     zones: list[Polygon] | None = None
+    flush_edges: list[Polygon] | None = None
     corridors: list[Polygon] | None = None
 
 
@@ -190,8 +195,14 @@ def parse_map_info(blob: bytes) -> MapInfo:
     a new claim rather than a decode. The fixture carries all five.
     """
     boundaries: list[Polygon] = []
+    corridors: list[Polygon] = []
     for entry in json.loads(blob):
-        if entry[0] != "1" or len(entry) < 2:
+        if len(entry) < 2:
+            continue
+        if entry[0] == "2":
+            corridors.extend(_corridors(entry[1:]))
+            continue
+        if entry[0] != "1":
             continue
         for element in entry[1:]:
             fields = element.split(";")
@@ -210,7 +221,40 @@ def parse_map_info(blob: bytes) -> MapInfo:
                 continue
             if outline:
                 boundaries.append(outline)
-    return MapInfo(boundaries=boundaries or None)
+    # Record 1 and record 2 arrive in the same reassembled blob, so a
+    # blob that carries outlines is a full snapshot of both: an empty
+    # record 2 there says the passages are gone, not that none were
+    # reported. Only the idle variant, which carries no outline either,
+    # is "no update" — otherwise a passage would outlive the lawn it
+    # joins, in the map and in the store, with nothing able to clear it.
+    return MapInfo(
+        boundaries=boundaries or None,
+        corridors=corridors if boundaries else (corridors or None),
+    )
+
+
+def _corridors(elements: list[str]) -> list[Polygon]:
+    """Decode onMI record 2: ``<id>,<from>,<to>;<x,y>;<chain code>`` each.
+
+    A three-lawn GOAT O800 RTK (``9bts2s``, fw 1.13.8) sends ``1,1,2``
+    and ``2,2,3`` there, 11 and 79 points long, and the two ids in each
+    header are exactly the areas whose outlines the ends touch — 0 mm
+    from both (issue #41). Record 2 was documented as a bare marker,
+    which is all a single-area map puts in it.
+
+    The header is also what tells a corridor from everything else a
+    record 2 has held: it carries commas, where every other dialect leads
+    with a plain id — firmware 1.36's retrace of the outline (``129``) and
+    its islands (``100``…) included, which must not be read as passages.
+    """
+    corridors: list[Polygon] = []
+    for element in elements:
+        fields = element.split(";")
+        if len(fields) < 3 or "," not in fields[0]:
+            continue
+        if points := chain_to_points(";".join(fields[1:])):
+            corridors.append(points)
+    return corridors
 
 
 def _polygons(items: list[str]) -> list[Polygon]:
@@ -286,8 +330,9 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
     as "no update" too rather than risk wiping the lawn on an unconfirmed
     shape.
 
-    Neither the lawn outline nor corridors have a section here: onMI
-    still carries the outline, and no capture has shown corridors.
+    Neither the lawn outline nor the flush-mow edges have a section
+    here: onMI still carries the outline, and no 1.17 capture has shown
+    anything in section 6.
     """
     sections: dict[str, list[Polygon]] = {}
     for entry in entries:
@@ -319,7 +364,7 @@ def _parse_area_info_v117(entries: list[list[str]]) -> AreaInfo:
 
 
 def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
-    """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 boundary, 6 corridors.
+    """Parse onArI up to 1.13: 1/2 zones, 3 obstacles, 5 outlines, 6 edges.
 
     Entry format: ``["<area>", "<section>", "<flag>", *items]`` where flag
     "0" means "no update" for that section — represented as None so stored
@@ -335,13 +380,14 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
     before it and only the last area survived — for the outline that meant
     two thirds of the map silently disappeared.
 
-    Section 6 is named after a guess, and the name is wrong. On that
-    mower all 230, 106 and 186 points of its three records lie exactly on
-    the outline of area 1, and its owner drew them in the app to say where
-    the mower should mow flush against the lawn edge. They are arcs of the
-    boundary, not passages between lawns, which is why they are the one
-    layer the renderer must leave open. The field keeps the name for now:
-    changing it reaches the event, the store and the renderer.
+    Section 6 holds the stretches of edge the mower is told to mow flush
+    against. On that mower all 230, 106 and 186 points of its three
+    records lie exactly on the outline of area 1 — every one — and its
+    owner drew those stretches in the app for that purpose. They are arcs
+    of the boundary, which is why the renderer leaves them open. It was
+    called "corridors" here until then, from a guess made when no capture
+    had anything in the section; the passages between lawns are a
+    different thing and arrive on onMI.
 
     An area's items are therefore accumulated into their section instead of
     replacing it. One consequence is worth naming: a section is published
@@ -380,12 +426,12 @@ def _parse_area_info_chain(entries: list[list[str]]) -> AreaInfo:
         # that carried no geometry must never wipe a stored outline.
         boundaries = _polygons(sections["5"]) or None
 
-    corridors = _polygons(sections["6"]) if "6" in sections else None
+    flush_edges = _polygons(sections["6"]) if "6" in sections else None
     obstacles = _polygons(sections["3"]) if "3" in sections else None
 
     return AreaInfo(
         map_info=MapInfo(
-            boundaries=boundaries, zones=zones, corridors=corridors
+            boundaries=boundaries, zones=zones, flush_edges=flush_edges
         ),
         obstacles=obstacles,
     )

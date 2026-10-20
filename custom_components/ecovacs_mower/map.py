@@ -23,6 +23,9 @@ class MowerMap:
         # lawn, every other mower exactly one.
         self.boundaries: list[Polygon] = []
         self.zones: list[Polygon] = []
+        self.flush_edges: list[Polygon] = []
+        # The passages joining two areas, from onMI. Open paths, not
+        # rings, like the flush edges above.
         self.corridors: list[Polygon] = []
         self.obstacles: list[Polygon] = []
         self.nogo_zones: list[Polygon] = []
@@ -54,6 +57,7 @@ class MowerMap:
             and not self.covered
             and not self.nogo_zones
             and not self.obstacles
+            and not self.flush_edges
             and not self.corridors
         )
 
@@ -61,13 +65,16 @@ class MowerMap:
         self,
         boundaries: list[Polygon] | None,
         zones: list[Polygon] | None,
-        corridors: list[Polygon] | None,
+        flush_edges: list[Polygon] | None,
+        corridors: list[Polygon] | None = None,
     ) -> None:
         """Merge static geometry; None means "unchanged"."""
         if boundaries is not None:
             self.boundaries = boundaries
         if zones is not None:
             self.zones = zones
+        if flush_edges is not None:
+            self.flush_edges = flush_edges
         if corridors is not None:
             self.corridors = corridors
 
@@ -124,6 +131,7 @@ class MowerMap:
         return {
             "boundaries": self.boundaries,
             "zones": self.zones,
+            "flush_edges": self.flush_edges,
             "corridors": self.corridors,
             "obstacles": self.obstacles,
             "nogo_zones": self.nogo_zones,
@@ -155,7 +163,20 @@ class MowerMap:
             # nothing but wrapping.
             mower_map.boundaries = [polygon(data["boundary"])]
         mower_map.zones = [polygon(p) for p in data.get("zones", [])]
-        mower_map.corridors = [polygon(p) for p in data.get("corridors", [])]
+        # "corridors" is what section 6 was called before it was named
+        # for the flush-mow edges it holds, and is what older snapshots
+        # store it under. In one of those the key is the flush edges and
+        # there are no passages; in a current one the two are separate.
+        legacy = "flush_edges" not in data
+        mower_map.flush_edges = [
+            polygon(p)
+            for p in (data.get("corridors") if legacy else data["flush_edges"])
+            or []
+        ]
+        if not legacy:
+            mower_map.corridors = [
+                polygon(p) for p in data.get("corridors", [])
+            ]
         mower_map.obstacles = [polygon(p) for p in data.get("obstacles", [])]
         mower_map.nogo_zones = [
             polygon(p) for p in data.get("nogo_zones", [])

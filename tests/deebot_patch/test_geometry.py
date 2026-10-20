@@ -168,7 +168,7 @@ def test_parse_map_info_extracts_boundary() -> None:
     (boundary,) = info.boundaries
     assert boundary[0] == (-31000, 1800)
     assert len(boundary) == 2415
-    assert info.zones is None and info.corridors is None
+    assert info.zones is None and info.flush_edges is None
 
 
 def test_parse_map_info_reads_one_outline_per_area() -> None:
@@ -185,10 +185,52 @@ def test_parse_map_info_reads_one_outline_per_area() -> None:
     ]
 
 
+def test_parse_map_info_reads_the_corridors_between_areas() -> None:
+    # Record 2 of the same three-lawn O800 RTK holds the passages:
+    # "1,1,2;850,2200;…" and "2,2,3;7750,18450;…", whose header ids are
+    # the two areas each one joins. Record 2 was documented as the bare
+    # marker a single-area map puts there, so they were never read.
+    info = parse_map_info(_blob("on_mi_multi_area"))
+    assert [len(corridor) for corridor in info.corridors] == [11, 79]
+    assert [corridor[0] for corridor in info.corridors] == [
+        (850, 2200),
+        (7750, 18450),
+    ]
+
+
+def test_parse_map_info_v2_record_2_is_not_a_corridor() -> None:
+    # Firmware 1.36 puts the outline retraced at the grid step in record
+    # 2 ("129;…") and the islands in record 3. Neither leads with the
+    # comma-separated header a corridor has, so neither is read as one.
+    # The empty list clears a layer this dialect never fills, which is
+    # the no-op it looks like.
+    info = parse_map_info(_blob("on_map_info_v2_g1800"))
+    assert info.corridors == []
+    assert len(info.boundaries) == 1
+
+
+def test_parse_map_info_clears_the_corridors_of_a_full_snapshot() -> None:
+    # Record 1 and record 2 arrive in one blob, so outlines with nothing
+    # in record 2 mean the passages are gone. A single-area 1.13 map puts
+    # the bare marker there: an empty list, which clears, where a None
+    # would strand a passage on a lawn the owner has deleted — stored,
+    # drawn, and with nothing able to remove it.
+    info = parse_map_info(_blob("on_mi_full"))
+    assert info.boundaries is not None
+    assert info.corridors == []
+
+
+def test_parse_map_info_idle_leaves_the_corridors_alone() -> None:
+    # No outline either, so this blob says nothing about the passages
+    # and must not clear them.
+    info = parse_map_info(_blob("on_mi_idle"))
+    assert info.corridors is None
+
+
 def test_parse_map_info_idle_carries_nothing() -> None:
     info = parse_map_info(_blob("on_mi_idle"))
     assert info.boundaries is None
-    assert info.zones is None and info.corridors is None
+    assert info.zones is None and info.flush_edges is None
 
 
 def test_parse_area_info_full_snapshot() -> None:
@@ -197,7 +239,7 @@ def test_parse_area_info_full_snapshot() -> None:
     (boundary,) = area.map_info.boundaries
     assert boundary[0] == (-31000, 1800)
     assert len(area.map_info.zones) == 5  # sections 1 + 2
-    assert len(area.map_info.corridors) == 3  # section 6
+    assert len(area.map_info.flush_edges) == 3  # section 6
     assert len(area.obstacles) == 15  # section 3, ids 100-114
 
 
@@ -205,7 +247,7 @@ def test_parse_area_info_zero_sections_mean_no_update() -> None:
     area = parse_area_info(_blob("on_ari_obstacles_only"))
     assert area.map_info.boundaries is None
     assert area.map_info.zones is None
-    assert area.map_info.corridors is None
+    assert area.map_info.flush_edges is None
     assert len(area.obstacles) == 14
 
 
@@ -281,7 +323,7 @@ def test_parse_map_info_v117_reads_the_point_list_boundary() -> None:
     (boundary,) = info.boundaries
     assert boundary[0] == (-10800, 7900)
     assert len(boundary) == 1117
-    assert info.zones is None and info.corridors is None
+    assert info.zones is None and info.flush_edges is None
 
 
 def test_parse_map_info_v117_idle_carries_nothing() -> None:
@@ -289,7 +331,7 @@ def test_parse_map_info_v117_idle_carries_nothing() -> None:
     # the end of it, so the blob was dropped as undecodable (#41).
     info = parse_map_info(_blob("on_mi_idle_v117"))
     assert info.boundaries is None
-    assert info.zones is None and info.corridors is None
+    assert info.zones is None and info.flush_edges is None
 
 
 # ``on_map_info_v2_g1800`` is the seven-fragment ``onMapInfo_V2`` answer a
@@ -316,7 +358,7 @@ def test_parse_map_info_reads_the_firmware_136_boundary() -> None:
     (boundary,) = info.boundaries
     assert boundary[0] == (-11918, 1959)
     assert len(boundary) == 692
-    assert info.zones is None and info.corridors is None
+    assert info.zones is None and info.flush_edges is None
     # Same closure rule as every other dialect: within one grid step.
     end_x, end_y = boundary[-1]
     assert abs(end_x - boundary[0][0]) <= STEP_MM
@@ -369,7 +411,7 @@ def test_parse_area_info_v117_zones_obstacles_and_empty_nogo() -> None:
     assert area.nogo == []
     # 1.17 has no boundary or corridor section; onMI carries the outline.
     assert area.map_info.boundaries is None
-    assert area.map_info.corridors is None
+    assert area.map_info.flush_edges is None
 
 
 def test_parse_area_info_v117_reads_nogo_zones() -> None:
@@ -413,7 +455,7 @@ def test_parse_area_info_v117_all_ids_only_is_still_detected() -> None:
 def test_parse_area_info_chain_keeps_every_area_of_a_multi_area_map() -> None:
     # A GOAT O800 RTK (9bts2s, fw 1.13.8) whose map holds three lawns sends
     # one entry per (area, section): three section-5 outlines, and obstacles
-    # and corridors per area. Keyed by section alone, every area but the
+    # and flush_edges per area. Keyed by section alone, every area but the
     # last was overwritten, so the map showed one lawn of three (issue #41).
     blob = json.dumps(
         [
@@ -435,7 +477,7 @@ def test_parse_area_info_chain_keeps_every_area_of_a_multi_area_map() -> None:
         (9000, 0),
     ]
     assert len(area.obstacles) == 3
-    assert len(area.map_info.corridors) == 2
+    assert len(area.map_info.flush_edges) == 2
 
 
 def test_parse_area_info_v113_section_4_point_list_is_not_the_v117_dialect() -> None:

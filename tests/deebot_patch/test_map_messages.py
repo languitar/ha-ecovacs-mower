@@ -64,7 +64,18 @@ def test_on_mi_notifies_boundary() -> None:
     event = events[0]
     assert isinstance(event, MowerMapInfoEvent)
     assert event.boundaries[0][0] == (-31000, 1800)
-    assert event.zones is None and event.corridors is None
+    assert event.zones is None and event.flush_edges is None
+
+
+def test_on_mi_notifies_every_outline_and_the_corridors() -> None:
+    events = _notified(OnMI, "on_mi_multi_area")
+    assert len(events) == 1
+    assert [len(outline) for outline in events[0].boundaries] == [
+        2420,
+        1222,
+        499,
+    ]
+    assert [len(corridor) for corridor in events[0].corridors] == [11, 79]
 
 
 def test_on_mi_idle_notifies_nothing() -> None:
@@ -240,7 +251,7 @@ def test_on_map_info_publishes_the_captured_boundary() -> None:
     assert isinstance(events[0], MowerMapInfoEvent)
     assert events[0].boundaries[0][0] == (-11918, 1959)
     assert len(events[0].boundaries[0]) == 692
-    assert events[0].zones is None and events[0].corridors is None
+    assert events[0].zones is None and events[0].flush_edges is None
 
 
 def test_on_map_info_publishes_nothing_before_the_last_fragment() -> None:
