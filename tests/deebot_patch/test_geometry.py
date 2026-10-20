@@ -299,7 +299,7 @@ def test_parse_map_track_marks_a_full_plan() -> None:
     track = parse_map_track(blob)
 
     assert track.full is True
-    assert len(track.remaining) == 2
+    assert len(track.rows) == 2
 
 
 def test_parse_map_track_marks_a_single_row_push() -> None:
@@ -308,18 +308,18 @@ def test_parse_map_track_marks_a_single_row_push() -> None:
     track = parse_map_track(blob)
 
     assert track.full is False
-    assert track.remaining == {("1", 155): [((-22199, 14450), (-17050, 14450))]}
+    assert track.rows == {("1", 155): [((-22199, 14450), (-17050, 14450))]}
 
 
 def test_parse_map_track_single_lane() -> None:
     track = parse_map_track(_blob("on_map_track_single_lane"))
-    assert track.remaining == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
+    assert track.rows == {("3", 67): [((-26825, 2400), (-26825, 4199))]}
 
 
 def test_parse_map_track_bare_record_clears_the_row() -> None:
     track = parse_map_track(_blob("on_map_track_multipart"))
-    assert track.remaining[("1", 36)] == []  # record "1;1;36" — no coordinates
-    assert track.remaining[("1", 41)] == [
+    assert track.rows[("1", 36)] == []  # record "1;1;36" — no coordinates
+    assert track.rows[("1", 41)] == [
         ((-30850, 4025), (-28000, 4025))
     ]
 

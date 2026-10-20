@@ -68,6 +68,10 @@ class MowerProfile:
     ``onArI`` as this class's no-go zones and lets it outrank
     ``onSpecialContour``; without it the section joins the mowing zones,
     which is what every class did before one of them was checked.
+    ``remaining_plan`` reads ``onMapTrack`` as the part of the current job
+    still to mow rather than as coverage, which also means asking for the
+    whole plan with ``getMapTrack`` and leaving the driven path undrawn;
+    without it the class keeps the coverage reading and its drawn path.
     ``uwb_beacons`` makes ``getLifeSpan`` ask for every component instead of
     naming the library's, because the class reports its beacons only in the
     answer to that request. Without it, the request names the library's
@@ -79,6 +83,7 @@ class MowerProfile:
     area_parameters: bool = False
     area_names: bool = False
     area_nogo: bool = False
+    remaining_plan: bool = False
     zone_mowing: bool = False
     border_mowing: bool = False
     uwb_beacons: bool = False
@@ -177,6 +182,27 @@ class MowerProfile:
 #                     not mention at all, so what the section means there is
 #                     an open question (PR #136 review) and that mower keeps
 #                     reading its zones from onSpecialContour.
+#   remaining_plan  — 9bts2s: onMapTrack watched through a job on the O800
+#                     RTK, firmware 1.13.8, with the Android app open
+#                     beside it. One row's reported length fell 10.25 m to
+#                     0.00 m over 70 s at 0.33 m/s — mowing speed — and
+#                     the row was absent from the next snapshot; the span's
+#                     moving end tracked the mower's own onPos position. Of
+#                     the rows in the capture 1 finished and was dropped, 1
+#                     shrank, none appeared, and the whole-map total only
+#                     fell, 809.6 m to 742.1 m. Coverage cannot shrink.
+#                     Also: the mower pushes one row at a time, 97 blobs of
+#                     47 bytes in three minutes, and each of the 19 whole
+#                     snapshots followed a getMapTrack the phone had sent
+#                     seconds earlier — hence the request on the poll tick.
+#                     Off everywhere else. One mower is one mower, and the
+#                     evidence is a job watched end to end, which no other
+#                     class has had. The G1-800 also raises a question of
+#                     its own: it talks on the V2 family and GetMapTrack is
+#                     not built on _AdaptiveFamily, so whether that class
+#                     wants a getMapTrack_V2 is unanswered (PR #144
+#                     review). Firmware 1.17 is a separate case again — it
+#                     sends onMapTrace instead and never this message.
 #   zone_mowing     — e4gqia: the spotArea payload confirmed on the A1600
 #                     LiDAR Pro, firmware 1.11.31 (PR #78); see zonal.py.
 #                     77atlz: two zone runs on the G1-800, firmware 1.36.208,
@@ -228,7 +254,11 @@ class MowerProfile:
 SUPPORTED_CLASSES: dict[str, MowerProfile] = {
     "2i0fns": MowerProfile("2i0fns", area_parameters=True, zone_mowing=True),
     "9bts2s": MowerProfile(
-        "9bts2s", area_names=True, area_nogo=True, zone_mowing=True
+        "9bts2s",
+        area_names=True,
+        area_nogo=True,
+        remaining_plan=True,
+        zone_mowing=True,
     ),
     "2px96q": MowerProfile("2px96q"),
     "77atlz": MowerProfile(

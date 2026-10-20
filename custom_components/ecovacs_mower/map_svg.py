@@ -5,10 +5,11 @@ image/svg+xml; layer classes exist for the tests, styling is inline. The
 coordinate system is the mower's own map frame in mm (dock at origin);
 the y axis is flipped because SVG grows downwards.
 
-The driven path is deliberately not a layer here. ``MowerMap`` still
-keeps it and the image entity still publishes it as an attribute, for a
-card that wants to draw it; what it is not is something this renderer
-can show honestly. See ``MowerMap.track``.
+Two layers follow the device's reading of ``onMapTrack``
+(``MowerMap.remaining_plan``): the remaining lanes of the current job,
+with no driven path, or the coverage lanes and the path, which is what
+every class without that reading keeps. ``MowerMap`` keeps the path
+either way and the image entity always publishes it as an attribute.
 """
 
 from __future__ import annotations
@@ -23,21 +24,32 @@ _SCALE = 0.02  # px per mm — a 30 m lawn becomes ~600 px
 _MARGIN_MM = 500
 
 _BACKGROUND = "#1c2620"
-# The lawn is one green, because the mower never says a lawn is mowed —
-# it says what is left of the job it is on. That is _UNCUT, drawn over
-# the lawn in the lighter, yellower green of grass still standing; where
-# it is absent the map is making no claim. Light over dark rather than
-# the other way round because the remaining lanes are thin and must
-# carry at a dashboard's size, and a lawn outside the current job gets
-# no lanes at all and must not read as finished.
+# The lawn is one green, because on the class that has been watched the
+# mower never says a lawn is mowed — it says what is left of the job it
+# is on. That is _UNCUT, drawn over the lawn in the lighter, yellower
+# green of grass still standing; where it is absent the map is making no
+# claim. Light over dark rather than the other way round because the
+# remaining lanes are thin and must carry at a dashboard's size, and a
+# lawn outside the current job gets no lanes at all and must not read as
+# finished.
 _LAWN_FILL = "#2c4a33"
 _LAWN_EDGE = "#cdf0d4"
 _UNCUT = "#b7e26a"
-# The 1.17 onMapTrace layer is the other way round — its own docstring
-# reads section 1 as the outline of what HAS been mowed — so it keeps a
-# colour of its own until somebody checks that reading against hardware
-# the way onMapTrack has now been checked.
-_MOWED = "#7ecb87"
+# The two layers that claim the opposite — ground already covered — share
+# the darker green coverage has always been drawn in here, read as cut
+# rather than as standing: _LANE is onMapTrack under the coverage
+# reading, which is every class the remaining-plan reading has not been
+# confirmed on, and the 1.17 onMapTrace area, whose own docstring reads
+# section 1 as the outline of what HAS been mowed. Neither may borrow
+# _UNCUT's light green, however well it would carry: #7ecb87 against
+# #b7e26a is 1.31:1, two light greens a glance cannot separate, and a
+# 1.17 mower draws coverage while never drawing a remaining lane, so on
+# its map that brightness would say the opposite of what it says above.
+# Against the darker lawn fill _LANE reads better than it used to anyway
+# — 2.50:1, where it was 1.96:1 on the old fill. Neither layer has been
+# checked against hardware the way onMapTrack now has on one class.
+_LANE = "#4a8f52"
+_TRACK = "#e8e16a"
 _ZONE = "#c9a94e"
 _FLUSH_EDGE = "#5aa0c8"
 _CORRIDOR = "#8f7fd6"
@@ -62,6 +74,8 @@ def render(mower_map: MowerMap) -> str:
         return _PLACEHOLDER
 
     points: list[Point] = [mower_map.dock]
+    if not mower_map.remaining_plan:
+        points.extend(mower_map.track)
     for polygon in (
         mower_map.boundaries
         + mower_map.zones
@@ -72,9 +86,10 @@ def render(mower_map: MowerMap) -> str:
         + mower_map.covered
     ):
         points.extend(polygon)
-    for segments in mower_map.remaining.values():
-        for start, end in segments:
-            points.extend((start, end))
+    for rows in (mower_map.remaining, mower_map.lanes):
+        for segments in rows.values():
+            for start, end in segments:
+                points.extend((start, end))
     if mower_map.position:
         points.append(mower_map.position)
     points.extend(point for point, _ in mower_map.labels)
@@ -115,7 +130,7 @@ def render(mower_map: MowerMap) -> str:
             for polygon in mower_map.covered + mower_map.covered_holes
         )
         parts.append(
-            f'<path class="covered" d="{rings}" fill="{_MOWED}" '
+            f'<path class="covered" d="{rings}" fill="{_LANE}" '
             'fill-rule="evenodd" opacity="0.9"/>'
         )
     for segments in mower_map.remaining.values():
@@ -126,6 +141,13 @@ def render(mower_map: MowerMap) -> str:
                 f'<path class="uncut" d="{path([start, end], close=False)}" '
                 f'stroke="{_UNCUT}" stroke-width="2" fill="none" '
                 'opacity="0.95"/>'
+            )
+    for segments in mower_map.lanes.values():
+        for start, end in segments:
+            parts.append(
+                f'<path class="lane" d="{path([start, end], close=False)}" '
+                f'stroke="{_LANE}" stroke-width="2" fill="none" '
+                'opacity="0.9"/>'
             )
     for polygon in mower_map.zones:
         parts.append(
@@ -161,6 +183,18 @@ def render(mower_map: MowerMap) -> str:
             f'<text class="label" x="{label_x}" y="{label_y}" '
             f'fill="{_LABEL}" font-family="sans-serif" font-size="11" '
             f'text-anchor="middle">{escape(name)}</text>'
+        )
+
+    if mower_map.track and not mower_map.remaining_plan:
+        # Only under the coverage reading. Where onMapTrack is the
+        # remaining plan this line is a handful of samples minutes apart,
+        # and any path through them crosses lawns the mower never drove
+        # over; where it is not, the path is the only thing that says
+        # where the mower has been between two pushes.
+        parts.append(
+            f'<path class="track" '
+            f'd="{path(mower_map.track, close=False)}" fill="none" '
+            f'stroke="{_TRACK}" stroke-width="1.2" opacity="0.9"/>'
         )
 
     dock_x, dock_y = (v for v in xy(mower_map.dock).split(","))

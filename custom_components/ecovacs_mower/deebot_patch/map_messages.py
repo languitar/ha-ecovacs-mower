@@ -72,11 +72,25 @@ class MowerObstaclesEvent(Event):
 
 
 @dataclass(frozen=True)
+class MowerCoverageEvent(Event):
+    """Mowed lane spans keyed (zone, row); an empty list clears the row.
+
+    The reading onMapTrack gets on a class whose ``remaining_plan`` flag
+    is off: unvalidated, and what this integration has always published.
+    Merged forever, because under this reading nothing a row says can
+    take back what an earlier one said.
+    """
+
+    lanes: dict[tuple[str, int], list[Segment]]
+
+
+@dataclass(frozen=True)
 class MowerRemainingEvent(Event):
     """The lanes still to mow, keyed (zone, row).
 
     Not coverage: see ``MapTrack``. An empty list is a row with nothing
-    left in it.
+    left in it. Published in place of ``MowerCoverageEvent`` for a class
+    whose profile sets ``remaining_plan``.
 
     ``complete`` is the whole remaining plan, in answer to
     ``GetMapTrack``: it is the entire truth and anything not in it is
@@ -268,21 +282,34 @@ class OnArI(_MapMessage):
 
 
 class OnMapTrack(_MapMessage):
-    """What is still to mow, as lane stretches per 100 mm row."""
+    """Lane stretches per 100 mm row — what is still to mow, or coverage.
+
+    Which of the two is the class's business, not the blob's: the bytes
+    are identical and only one mower has been watched long enough to say
+    what they mean. A class whose profile sets ``remaining_plan`` gets the
+    measured reading; every other one keeps the coverage reading this
+    integration has always published. See ``MapTrack`` and
+    ``MowerProfile.remaining_plan``.
+    """
 
     NAME = "onMapTrack"
 
     @classmethod
     def _notify(cls, event_bus: EventBus, blob: bytes) -> HandlingResult:
         track = parse_map_track(blob)
+        profile = profile_for_bus(event_bus)
+        if profile is None or not profile.remaining_plan:
+            # Coverage grows and never shrinks under this reading, so an
+            # empty blob has nothing to say.
+            if track.rows:
+                event_bus.notify(MowerCoverageEvent(lanes=track.rows))
+            return HandlingResult.success()
         # An empty full snapshot is the most informative blob there is:
         # it says the job is finished. Only an empty incremental one has
         # nothing in it.
-        if track.remaining or track.full:
+        if track.rows or track.full:
             event_bus.notify(
-                MowerRemainingEvent(
-                    rows=track.remaining, complete=track.full
-                )
+                MowerRemainingEvent(rows=track.rows, complete=track.full)
             )
         return HandlingResult.success()
 
