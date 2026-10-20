@@ -15,10 +15,11 @@ from custom_components.ecovacs_mower.deebot_patch.hardware import (
 )
 from custom_components.ecovacs_mower.deebot_patch.zonal import MowArea
 
-# A supported class whose profile leaves zone mowing off, so the two tests
-# below can turn it on and watch the gate react. It is the O800 RTK's second
-# class string, the same hardware as the zone-confirmed 9bts2s.
-NO_ZONE = "2px96q"
+# A supported class whose profile has every flag off, so the tests below can
+# turn one on and watch the gate react — and so the device it patches carries
+# neither MowArea nor a MowerAreaEvent refresh to begin with. It is the O800
+# RTK's second class string, the same hardware as the zone-confirmed 9bts2s.
+NO_FLAGS = "2px96q"
 A1600_LIDAR = "e4gqia"
 
 
@@ -77,28 +78,51 @@ async def test_the_profile_is_the_only_zone_gate(
     """
     monkeypatch.setitem(
         SUPPORTED_CLASSES,
-        NO_ZONE,
-        replace(SUPPORTED_CLASSES[NO_ZONE], zone_mowing=True),
+        NO_FLAGS,
+        replace(SUPPORTED_CLASSES[NO_FLAGS], zone_mowing=True),
     )
 
-    await patch_device_info(NO_ZONE)
-    info = await get_static_device_info(NO_ZONE)
+    await patch_device_info(NO_FLAGS)
+    info = await get_static_device_info(NO_FLAGS)
 
     assert info.capabilities.clean.action.area is MowArea
-    verify_capabilities(info.capabilities, NO_ZONE)
+    verify_capabilities(info.capabilities, NO_FLAGS)
 
 
 async def test_verify_capabilities_reads_the_flag_from_the_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A class flagged for zone mowing but built without MowArea fails loudly."""
-    await patch_device_info(NO_ZONE)
-    info = await get_static_device_info(NO_ZONE)
+    await patch_device_info(NO_FLAGS)
+    info = await get_static_device_info(NO_FLAGS)
     monkeypatch.setitem(
         SUPPORTED_CLASSES,
-        NO_ZONE,
-        replace(SUPPORTED_CLASSES[NO_ZONE], zone_mowing=True),
+        NO_FLAGS,
+        replace(SUPPORTED_CLASSES[NO_FLAGS], zone_mowing=True),
     )
 
     with pytest.raises(PatchContractError, match="MowArea capability"):
-        verify_capabilities(info.capabilities, NO_ZONE)
+        verify_capabilities(info.capabilities, NO_FLAGS)
+
+
+async def test_verify_capabilities_reads_the_area_names_flag_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A class flagged for area names but built without getAreaSet fails loudly.
+
+    The counterpart of the area_parameters pair checked above. Without it
+    the labels would just stop appearing if the wiring ever stopped
+    reaching the device, with nothing to say why. This class has both area
+    flags off, so the device it patched carries no MowerAreaEvent refresh
+    for the check to find.
+    """
+    await patch_device_info(NO_FLAGS)
+    info = await get_static_device_info(NO_FLAGS)
+    monkeypatch.setitem(
+        SUPPORTED_CLASSES,
+        NO_FLAGS,
+        replace(SUPPORTED_CLASSES[NO_FLAGS], area_names=True),
+    )
+
+    with pytest.raises(PatchContractError, match=r"instead of \[GetAreaSet\]"):
+        verify_capabilities(info.capabilities, NO_FLAGS)

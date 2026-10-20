@@ -217,3 +217,15 @@ def verify_capabilities(capabilities: Capabilities, class_: str) -> None:
                 f"{[type(c).__name__ for c in area_commands]} instead of "
                 f"[GetAreaParameter, GetAreaSet]"
             )
+    elif profile is not None and profile.area_names:
+        # The names and their label points, without the raw parameters the
+        # per-area entities need. Checked for the same reason as the pair
+        # above: if the wiring ever stops reaching the device, the labels
+        # simply stop appearing and nothing says why.
+        area_commands = capabilities.get_refresh_commands(MowerAreaEvent)
+        if [type(command) for command in area_commands] != [GetAreaSet]:
+            _fail(
+                f"the area commands for {class_} are "
+                f"{[type(c).__name__ for c in area_commands]} instead of "
+                f"[GetAreaSet]"
+            )

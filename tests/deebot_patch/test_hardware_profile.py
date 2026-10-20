@@ -34,10 +34,18 @@ def test_zone_mowing_is_enabled_only_for_validated_class() -> None:
     } == {"e4gqia", "77atlz", "2i0fns", "51rcxt", "9bts2s"}
 
 
+def test_area_names_are_enabled_only_for_the_validated_class() -> None:
+    """The ar row's shape is not inferred from another class's."""
+    assert {
+        class_ for class_, profile in SUPPORTED_CLASSES.items() if profile.area_names
+    } == {"9bts2s"}
+
+
 def test_profile_flags_default_to_off() -> None:
     """A newly supported class is patched without claiming any capability."""
     profile = MowerProfile("new000")
 
     assert profile.area_parameters is False
+    assert profile.area_names is False
     assert profile.zone_mowing is False
     assert profile.border_mowing is False

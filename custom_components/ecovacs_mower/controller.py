@@ -63,8 +63,13 @@ from .deebot_patch import (
     register_mower_bus,
     verify_capabilities,
 )
+from .deebot_patch.areas import MowerAreaEvent
 from .deebot_patch.commands import GetPosMower
-from .deebot_patch.hardware import SUPPORTED_CLASSES, patch_device_info
+from .deebot_patch.hardware import (
+    SUPPORTED_CLASSES,
+    patch_device_info,
+    profile_for_class,
+)
 from .deebot_patch.map_messages import (
     MowerCoverageEvent,
     MowerCoveredAreaEvent,
@@ -304,6 +309,18 @@ class EcovacsController:
             )
             save()
 
+        async def on_areas(event: MowerAreaEvent) -> None:
+            # Only the areas the mower gave both a name and a point for:
+            # a label without either has nothing to draw.
+            mower_map.update_labels(
+                [
+                    (area.label, area.name)
+                    for area in sorted(event.areas, key=lambda a: a.area_id)
+                    if area.label is not None and area.name
+                ]
+            )
+            save()
+
         async def on_obstacles(event: MowerObstaclesEvent) -> None:
             mower_map.update_obstacles(event.obstacles)
             save()
@@ -339,6 +356,17 @@ class EcovacsController:
         device.events.subscribe(MowerCoveredAreaEvent, on_covered)
         device.events.subscribe(MowerNoGoZonesEvent, on_nogo)
         device.events.subscribe(PositionsEvent, on_positions)
+        # Only where the ar row's label point is validated. getAreaSet is
+        # also the second refresh command of every area_parameters class,
+        # so subscribing for all of them would turn whatever the A1600
+        # and A3000 LiDAR Pro put after the name into a label point as
+        # soon as it parses as a pair of integers — and a point that is
+        # not a map coordinate drags the viewport out with it, shrinking
+        # the lawn to make room. Nothing in this repo shows what those
+        # two models send there; issue #131 collects such readings.
+        profile = profile_for_class(device.device_info["class"])
+        if profile is not None and profile.area_names:
+            device.events.subscribe(MowerAreaEvent, on_areas)
 
     def _setup_fault_latch(self, device: Device) -> None:
         """Hold this mower's faults until something explicitly clears them.

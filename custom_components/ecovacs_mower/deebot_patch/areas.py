@@ -34,10 +34,16 @@ _LOGGER = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class MowerArea:
-    """The raw per-area parameters plus the optional app-defined name."""
+    """The raw per-area parameters plus the optional app-defined name.
+
+    ``label`` is where the mower itself puts that name on the map, in the
+    map frame's millimetres: columns 5 and 6 of the ``ar`` row, which a
+    three-lawn GOAT O800 RTK fills with a point inside each area.
+    """
 
     area_id: str
     name: str | None = None
+    label: tuple[int, int] | None = None
     mow_height_level: int | None = None
     cut_mode: int | None = None
     obstacle_height: int | None = None

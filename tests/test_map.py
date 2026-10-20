@@ -56,6 +56,7 @@ def test_round_trip_through_dict() -> None:
     mower_map.update_obstacles([[(5, 6)]])
     mower_map.update_nogo([[(7, 8)]])
     mower_map.update_coverage({("1", 5): [((0, 0), (0, 100))]})
+    mower_map.update_labels([((11, 12), "Hinten")])
     mower_map.update_position(1, 2, 3)
 
     # Simulate the JSON round trip Store performs (tuples become lists).
@@ -70,6 +71,7 @@ def test_round_trip_through_dict() -> None:
     assert restored.obstacles == [[(5, 6)]]
     assert restored.nogo_zones == [[(7, 8)]]
     assert restored.lanes == {("1", 5): [((0, 0), (0, 100))]}
+    assert restored.labels == [((11, 12), "Hinten")]
     # Track and position are deliberately not persisted.
     assert restored.track == [] and restored.position is None
 

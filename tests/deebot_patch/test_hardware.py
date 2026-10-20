@@ -283,6 +283,31 @@ async def test_a_second_patch_of_the_area_class_changes_nothing() -> None:
     assert first.capabilities.get_refresh_commands(MowerAreaEvent)
 
 
+async def test_area_names_wire_only_the_name_read() -> None:
+    # The O800 RTK answers getAreaSet with its area names and their label
+    # points, but nothing has validated what getAreaParameter means on it,
+    # so only the one read is wired and no parameter entities appear.
+    from custom_components.ecovacs_mower.deebot_patch.areas import MowerAreaEvent
+    from custom_components.ecovacs_mower.deebot_patch.commands import (
+        GetAreaParameter,
+        GetAreaSet,
+    )
+
+    await patch_device_info("9bts2s")
+    commands = _DEVICES["9bts2s"].capabilities.get_refresh_commands(
+        MowerAreaEvent
+    )
+
+    assert [type(command) for command in commands] == [GetAreaSet]
+
+    await patch_device_info("e4gqia")
+    both = _DEVICES["e4gqia"].capabilities.get_refresh_commands(MowerAreaEvent)
+    assert [type(command) for command in both] == [
+        GetAreaParameter,
+        GetAreaSet,
+    ]
+
+
 async def test_unknown_device_class_is_left_alone() -> None:
     # An unknown class must not crash. Verified in 18.6.0: get_static_device_info
     # returns None on ModuleNotFoundError, there is no fallback definition.

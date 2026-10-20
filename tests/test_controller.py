@@ -773,7 +773,7 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     controller._map_stores = {}
 
     device = MagicMock()
-    device.device_info = {"did": "did-1"}
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
 
     stored = {
         "boundaries": [[[0, 0], [100, 0], [100, 100]]],
@@ -792,10 +792,11 @@ async def test_setup_map_restores_persisted_geometry() -> None:
     mower_map = controller.maps["did-1"]
     assert mower_map.boundaries == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.lanes == {("1", 5): [((0, 0), (0, 100))]}
-    # Eager subscriptions: 5 map events + PositionsEvent. EventBus.notify
-    # drops events nobody subscribes to, so waiting for the entity to
-    # subscribe would lose data.
-    assert device.events.subscribe.call_count == 6
+    # Eager subscriptions: 5 map events, PositionsEvent, and — on this
+    # class — MowerAreaEvent for the labels. EventBus.notify drops events
+    # nobody subscribes to, so waiting for the entity to subscribe would
+    # lose data.
+    assert device.events.subscribe.call_count == 7
 
 
 async def test_setup_map_survives_corrupt_store() -> None:
@@ -809,7 +810,7 @@ async def test_setup_map_survives_corrupt_store() -> None:
     controller._map_stores = {}
 
     device = MagicMock()
-    device.device_info = {"did": "did-1"}
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
 
     with patch(
         "custom_components.ecovacs_mower.controller.Store"
@@ -858,7 +859,7 @@ async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
     controller._map_stores = {}
 
     device = MagicMock()
-    device.device_info = {"did": "did-1"}
+    device.device_info = {"did": "did-1", "class": "9bts2s"}
     callbacks: dict[type, object] = {}
     device.events.subscribe = lambda event_type, callback: callbacks.setdefault(
         event_type, callback
@@ -880,6 +881,60 @@ async def test_setup_map_feeds_the_covered_area_into_the_map() -> None:
     assert mower_map.covered == [[(0, 0), (100, 0), (100, 100)]]
     assert mower_map.covered_holes == [[(10, 10)]]
     store_cls.return_value.async_delay_save.assert_called_once()
+
+
+async def test_setup_map_reads_the_area_names_only_where_they_are_validated() -> (
+    None
+):
+    """The label point is only read on a class whose profile claims it.
+
+    getAreaSet is also the second refresh command of every
+    area_parameters class, so an ungated subscription would make a label
+    out of whatever the A1600 and A3000 LiDAR Pro put after the name —
+    and a point that is not a map coordinate stretches the viewport.
+    """
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from custom_components.ecovacs_mower.controller import EcovacsController
+    from custom_components.ecovacs_mower.deebot_patch.areas import (
+        MowerArea,
+        MowerAreaEvent,
+    )
+
+    async def setup(class_: str) -> tuple[object, dict[type, object]]:
+        controller = EcovacsController.__new__(EcovacsController)
+        controller._hass = MagicMock()
+        controller.maps = {}
+        controller._map_stores = {}
+
+        device = MagicMock()
+        device.device_info = {"did": "did-1", "class": class_}
+        callbacks: dict[type, object] = {}
+        device.events.subscribe = (
+            lambda event_type, callback: callbacks.setdefault(
+                event_type, callback
+            )
+        )
+        with patch(
+            "custom_components.ecovacs_mower.controller.Store"
+        ) as store_cls:
+            store_cls.return_value.async_load = AsyncMock(return_value=None)
+            await controller._setup_map(device)
+        return controller.maps["did-1"], callbacks
+
+    # 9bts2s: area_names is set, and the names reach the map.
+    mower_map, callbacks = await setup("9bts2s")
+    assert MowerAreaEvent in callbacks
+    await callbacks[MowerAreaEvent](
+        MowerAreaEvent((MowerArea(area_id="1", name="South", label=(10, 20)),))
+    )
+    assert mower_map.labels == [((10, 20), "South")]
+
+    # e4gqia: area_parameters without area_names, so getAreaSet is sent
+    # for the entities but nothing reads columns 5 and 6 as a point.
+    mower_map, callbacks = await setup("e4gqia")
+    assert MowerAreaEvent not in callbacks
+    assert mower_map.labels == []
 
 
 async def test_a_docked_mower_does_not_restart_the_poll_loop(hass) -> None:

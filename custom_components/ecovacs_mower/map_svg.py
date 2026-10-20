@@ -9,6 +9,7 @@ the y axis is flipped because SVG grows downwards.
 from __future__ import annotations
 
 import math
+from xml.sax.saxutils import escape
 
 from .deebot_patch.geometry import Point, Polygon
 from .map import MowerMap
@@ -23,6 +24,7 @@ _LANE = "#4a8f52"
 _ZONE = "#c9a94e"
 _FLUSH_EDGE = "#5aa0c8"
 _CORRIDOR = "#8f7fd6"
+_LABEL = "#e6f0e8"
 _NOGO_FILL = "#8f3a3a"
 _NOGO_EDGE = "#e07a7a"
 _OBSTACLE = "#c86a2e"
@@ -60,6 +62,7 @@ def render(mower_map: MowerMap) -> str:
             points.extend((start, end))
     if mower_map.position:
         points.append(mower_map.position)
+    points.extend(point for point, _ in mower_map.labels)
 
     min_x = min(p[0] for p in points) - _MARGIN_MM
     max_x = max(p[0] for p in points) + _MARGIN_MM
@@ -134,6 +137,13 @@ def render(mower_map: MowerMap) -> str:
         parts.append(
             f'<path class="obstacle" d="{path(polygon)}" '
             f'fill="{_OBSTACLE}" opacity="0.8"/>'
+        )
+    for point, name in mower_map.labels:
+        label_x, label_y = xy(point).split(",")
+        parts.append(
+            f'<text class="label" x="{label_x}" y="{label_y}" '
+            f'fill="{_LABEL}" font-family="sans-serif" font-size="11" '
+            f'text-anchor="middle">{escape(name)}</text>'
         )
     if len(mower_map.track) >= 1:
         parts.append(
