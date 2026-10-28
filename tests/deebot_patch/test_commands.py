@@ -27,6 +27,7 @@ from deebot_client.models import CleanAction, State
 from deebot_client.rs.map import PositionType
 
 from custom_components.ecovacs_mower.deebot_patch.commands import (
+    AppPing,
     CleanMower,
     GetAnimProtect,
     GetChargeStateMower,
@@ -42,7 +43,6 @@ from custom_components.ecovacs_mower.deebot_patch.commands import (
     MowerStateRefresh,
     SetAnimProtect,
     SetRainDelay,
-    _AppPing,
     _CleanNonV2,
     _CleanV2Mower,
     _GetCleanInfoNonV2,
@@ -1160,8 +1160,8 @@ def test_get_mi_is_the_non_v2_name_with_the_same_body() -> None:
 def test_app_ping_goes_out_with_the_apps_empty_body() -> None:
     # JsonCommand leaves the body out of a command without arguments; the app
     # sends {"data": {}}, the form confirmed to wake the mower.
-    payload = _AppPing()._get_payload()
-    assert _AppPing.NAME == "appping"
+    payload = AppPing()._get_payload()
+    assert AppPing.NAME == "appping"
     assert payload["body"] == {"data": {}}
     assert "header" in payload
 
@@ -1180,7 +1180,7 @@ def _pinging(sent: list[str], ping=None):
         sent.append(self.NAME)
         return {}
 
-    return patch.object(_AppPing, "_execute_api_request", ping or record)
+    return patch.object(AppPing, "_execute_api_request", ping or record)
 
 
 async def test_a_v2_mower_is_asked_with_v2_and_its_family_committed() -> None:

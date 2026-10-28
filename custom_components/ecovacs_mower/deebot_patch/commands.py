@@ -809,7 +809,7 @@ class GetMapInfoV2(_MapInfoRequest):
     NAME = "getMapInfo_V2"
 
 
-class _AppPing(ExecuteCommand):
+class AppPing(ExecuteCommand):
     """``appping``: what the Ecovacs app sends to say it is open.
 
     The mower never answers it. The app sends it when it opens a mower and
@@ -832,6 +832,21 @@ class _AppPing(ExecuteCommand):
 # request within milliseconds, and the HTTP call is abandoned when this runs
 # out rather than held open until the cloud gives up on the mower.
 _APP_PING_HEAD_START = 3  # seconds
+
+
+async def _ping(authenticator: Authenticator, device_info: ApiDeviceInfo) -> None:
+    """Send an ``appping`` and give it its head start, never raising."""
+    try:
+        await asyncio.wait_for(
+            AppPing()._execute_api_request(authenticator, device_info),
+            _APP_PING_HEAD_START,
+        )
+    except TimeoutError:
+        pass  # the usual outcome: the mower does not answer a ping
+    except Exception:
+        # A ping that fails costs nothing more than skipping it would, so it
+        # must not keep whatever follows it from going out.
+        _LOGGER.debug("appping failed", exc_info=True)
 
 
 class GetMI(_MapInfoRequest):
@@ -865,17 +880,7 @@ class GetMI(_MapInfoRequest):
         event_bus: EventBus,
     ) -> tuple[HandlingResult, dict[str, Any]]:
         """Ping as the app does, then ask."""
-        try:
-            await asyncio.wait_for(
-                _AppPing()._execute_api_request(authenticator, device_info),
-                _APP_PING_HEAD_START,
-            )
-        except TimeoutError:
-            pass  # the usual outcome: the mower does not answer a ping
-        except Exception:
-            # A ping that fails costs the map nothing more than skipping it
-            # would, so it must not keep getMI from going out.
-            _LOGGER.debug("appping before getMI failed", exc_info=True)
+        await _ping(authenticator, device_info)
         return await super()._execute(authenticator, device_info, event_bus)
 
 
