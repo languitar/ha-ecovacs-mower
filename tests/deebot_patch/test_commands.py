@@ -1237,6 +1237,29 @@ async def test_a_failed_ping_does_not_keep_get_mi_from_going_out() -> None:
     assert sent == ["getMapInfo_V2", "getMI"]
 
 
+async def test_a_ping_on_its_own_is_quietly_done_after_its_head_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Sent every two minutes while mowing, and never answered: the library's
+    # own path would wait out the API timeout and warn on every one.
+    async def unanswered(self, authenticator, device_info):
+        await asyncio.Event().wait()
+
+    with (
+        caplog.at_level(logging.WARNING),
+        _pinging([], unanswered),
+        patch(
+            "custom_components.ecovacs_mower.deebot_patch.commands."
+            "_APP_PING_HEAD_START",
+            0.01,
+        ),
+    ):
+        result = await AppPing().execute(AsyncMock(), _DEVICE_INFO, _bus())
+
+    assert result.device_reached is True
+    assert not caplog.records
+
+
 async def test_the_clean_commands_still_start_on_the_selected_family() -> None:
     # Only the map request starts on V2; clean info still goes out non-V2
     # first on a mower whose family is not known, as before.

@@ -814,6 +814,20 @@ class AppPing(ExecuteCommand):
 
     The mower never answers it. The app sends it when it opens a mower and
     about every two minutes after, with an empty body.
+
+    It is what opens the mower's batched transfers — ``onMI``, ``onArI``,
+    ``onMapTrack`` — to every listener. Measured on an O800 RTK (``9bts2s``),
+    firmware 1.13.8, docked, the app closed for 17 minutes (2026-10-28):
+    ``getMI`` alone was acked and nothing followed for a minute; ``appping``
+    and then ``getMI`` brought ``onMI`` and ``onArI`` within the second. How
+    long one ping holds is not measured. The two minutes the controller
+    repeats it at are the app's own vacuum screens' interval, read from the
+    app (``timer.schedule(…, 1000, 120000)``); the GOAT's screen is a
+    downloaded bundle and its interval could not be read.
+
+    Executed on its own it gets the same head start as before ``getMI`` and is
+    then reported a success: the library's own path would wait out the API
+    timeout on every ping and log it as a failed command.
     """
 
     NAME = "appping"
@@ -825,6 +839,16 @@ class AppPing(ExecuteCommand):
         # JsonCommand leaves the body out when there are no arguments; the app
         # sends {"data": {}}, and that is the form confirmed to work.
         return {**super()._get_payload(), "body": {"data": {}}}
+
+    async def _execute(
+        self,
+        authenticator: Authenticator,
+        device_info: ApiDeviceInfo,
+        event_bus: EventBus,
+    ) -> tuple[HandlingResult, dict[str, Any]]:
+        """Ping, and claim nothing about an answer that never comes."""
+        await _ping(authenticator, device_info)
+        return HandlingResult.success(), {}
 
 
 # How long the ping gets before getMI goes out. The mower never answers it,
